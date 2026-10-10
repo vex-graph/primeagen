@@ -34,6 +34,12 @@ offline TUI greeting/status only reflect that mode. Prompt guidance is not model
 compliance or vendor system-role proof. Vexspoke's actual JSON string writer is consumed, not duplicated.
 Display buffers use cold growable C storage; no realtime/backend-trust claim.
 
+Chat may read checkout-root Git-ignored `.env` for OPENAI_API_KEY and
+ANTHROPIC_API_KEY only. File parsing is bounded, literal and failure-preserving;
+no execution/interpolation or content-bearing diagnostic. Existing environment
+wins. Doctor/build/offline TUI do not load it. It remains local plaintext, never
+uploaded by default, and is not a secure store or hostile-directory sandbox.
+
 ### Explicit Tool Consent Law
 
 Model output is untrusted data, never authorization. Every read, Func build and
