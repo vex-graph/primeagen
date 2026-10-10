@@ -46,7 +46,22 @@ python3 build.py
 ```
 
 Hosted credentials come from `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; do not put
-them in argv, source or history. Chat explicitly contacts the configured provider
+them in argv, source or history. Chat also loads this checkout's Git-ignored `.env`
+automatically (not the current working directory). Existing shell environment
+variables take precedence, even if empty. Build, doctor and offline TUI do not
+load the file. Put your key into the corresponding blank entry:
+
+```dotenv
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+```
+
+Only these two names are accepted. Optional matching quotes are supported; no
+shell commands, substitutions, multiline values or inline comments are executed
+or interpreted. Invalid files reject before applying any new keys. The file is
+plain text, not encrypted; keep it private with `chmod 600 .env`. Never approve
+a tool read of `.env` or other secrets—approved read contents can reach the model.
+Chat explicitly contacts the configured provider
 and may incur charges. Build/doctor do not contact it. Read contents/tool results
 become part of later prompts: approve only data you intend to send to that backend.
 There is no unattended `--yes` flag. `/new` clears conversation; `/quit` exits.
