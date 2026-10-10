@@ -1,2 +1,6 @@
 #!/bin/sh
+if [ "${1:-}" = tui ]; then
+    shift
+    exec "$(dirname "$0")/.build/tui" "$@"
+fi
 exec python3 "$(dirname "$0")/src/cli.py" "$@"
