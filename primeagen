@@ -1,4 +1,8 @@
 #!/bin/sh
+if [ "${1:-}" = session ]; then
+    shift
+    exec python3 "$(dirname "$0")/src/session_host.py" "$@"
+fi
 if [ "${1:-}" = tui ]; then
     shift
     exec "$(dirname "$0")/.build/tui" "$@"
