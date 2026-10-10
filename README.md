@@ -21,10 +21,15 @@ Direct-provider behavior, macOS 14 runtime, Windows and GUI integration are unpr
 The existing R4 message value is reused, not a claim that Harness's planned agent
 objects or server are implemented.
 
-The new **C23 ncurses TUI** lives in `cli/` and `tui/`, with normalized mouse
+The **C23 ncurses TUI** lives in `cli/` and `tui/`, with normalized mouse
 events in `tui/event/`. It is an offline interface preview, not yet the native
-agent replacement: default local text entry, wrapped transcript scrolling, fixed input,
+agent replacement: disconnected start, wrapped transcript scrolling, fixed input,
 clickable Clear/Quit and optional `personality/owo.c` presentation mode.
+It now starts disconnected and exposes a local `/connect` action (also clickable)
+that restores the terminal and launches the existing OpenCode session host on
+`opencode-go/deepseek-v4.1-flash`. Ordinary disconnected text is not sent or
+silently appended as a pretend answer. The frontend is C; this handoff still uses
+the Python host and is not completion of the native-runtime migration.
 Explicit `session` connects this same terminal to a dedicated OpenCode chat session,
 with retained server history and final answers (not streaming). Automated fake
 CLI/pipe owners prove local wiring, not live Go entitlement or permission enforcement.
@@ -127,9 +132,21 @@ sh cli/build.sh
 ./primeagen tui --owo
 ```
 
+Running `./primeagen` with no arguments also opens the terminal. Enter `/connect`
+(or click it in the lower hint line), then type your message and press Enter.
+This uses your existing OpenCode Go connection and can consume Go quota; it
+creates a dedicated chat, never attaches to this coding session. If Go is not
+configured, connect **OpenCode Go** using OpenCode's own `/connect` first.
+Primeagen does not accept/store an API key here. The handoff starts a fresh
+terminal view; disconnected drafts are not transferred. `/help`, `/clear`
+(display only), and `/quit` are local commands; unsupported slash commands are
+reported locally, never sent to the model. `/settings`, server/channel navigation,
+streaming, Zen key entry and agent tool approval are not implemented.
+
 Wheel/PgUp/PgDn scroll the transcript; End returns to the tail. Click the input
-line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter appends
-locally and makes no model/tool call. Mouse reporting depends on the terminal.
+line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter
+sends only after connection; disconnected input makes no model/tool call.
+Mouse reporting depends on the terminal.
 Input editing is currently printable ASCII; other transcript bytes are escaped.
 Automated headless ncurses cell assertions are not appearance or real-terminal
 mouse acceptance. Normal exit and SIGINT/SIGTERM restore the terminal; crashes
