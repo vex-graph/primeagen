@@ -31,15 +31,17 @@
  *   static volatile sig_atomic_t stopped : signal-safe shutdown request only.
  *   main locals own Tui, SessionBridge, ncurses SCREEN and growable row buffer.
  *   sessionHost is a borrowed launcher-supplied path; no credentials are owned.
- * COLOR: draw() applies a 4-entry palette (TUI_PAIR_HEADER/ACCENT/STATUS/INPUT),
+ * COLOR: draw() applies a host palette including code and error text,
  *   initialized only when has_colors(). A monochrome terminal falls back to the
  *   default attributes (COLOR_PAIR yields 0), so behavior is unchanged there.
  * FUNCTION REGISTRY:
  * ----------------------------------------------------------------------------
  * Private helpers:
  *   static void stop(int signalNumber) : flag shutdown; no terminal API/logging.
- *   static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, size_t cap)
- *     Draw header/buttons, wrapped viewport, fixed input/status and cursor.
+ *   static chtype attributes(uint8_t style) : host flags to ncurses attributes.
+ *   static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, uint8_t *styles, size_t cap)
+ *     Draw per-cell styled wrapped viewport, fixed input/status and cursor.
+ *     No model-supplied terminal escape sequences; unsupported italic uses underline.
  *   static int command(Tui *, bool) : local slash dispatch; connect/quit actions.
  *   static int connectHost(const char *, bool) : exec existing adapter on Go Flash.
  * Entry:
@@ -68,7 +70,7 @@
 #define TUI_COMMAND_CONNECT 2
 #define TUI_COMMAND_QUIT 3
 #define TUI_CONNECT_MODEL "opencode-go/deepseek-v4.1-flash"
-enum { TUI_PAIR_HEADER = 1, TUI_PAIR_ACCENT = 2, TUI_PAIR_STATUS = 3, TUI_PAIR_INPUT = 4 };
+enum { TUI_PAIR_HEADER = 1, TUI_PAIR_ACCENT = 2, TUI_PAIR_STATUS = 3, TUI_PAIR_INPUT = 4, TUI_PAIR_CODE = 5, TUI_PAIR_ERROR = 6 };
 static volatile sig_atomic_t stopped;
 static void stop(int signalNumber) {
     (void) signalNumber;
@@ -116,7 +118,24 @@ static int connectHost(const char *path, bool owo) {
     return 1;
 }
 
-static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, size_t cap) {
+static chtype attributes(uint8_t style) {
+    chtype value = A_NORMAL;
+    if (style & TEXT_STYLE_BOLD)
+        value |= A_BOLD;
+    if (style & TEXT_STYLE_ITALIC)
+        value |= A_UNDERLINE; /* Portable emphasis fallback in this ncurses build. */
+    if (style & TEXT_STYLE_CODE)
+        value |= COLOR_PAIR(TUI_PAIR_CODE);
+    else if (style & TEXT_STYLE_ERROR)
+        value |= COLOR_PAIR(TUI_PAIR_ERROR);
+    else if (style & TEXT_STYLE_USER)
+        value |= COLOR_PAIR(TUI_PAIR_INPUT);
+    else if (style & (TEXT_STYLE_ASSISTANT | TEXT_STYLE_HEADING))
+        value |= COLOR_PAIR(TUI_PAIR_HEADER);
+    return value;
+}
+
+static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, uint8_t *styles, size_t cap) {
     int rows, columns;
     Tui_getSize(state, &rows, &columns);
     erase();
@@ -137,9 +156,10 @@ static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy
     size_t total = Tui_getVisualRowCount(state);
     size_t height = Tui_getViewportHeight(state);
     for (size_t i = 0; i < height && first + i < total; ++i) {
-        if (!Tui_copyRow(state, first + i, row, cap, nullptr))
+        if (!Tui_copyStyledRow(state, first + i, row, styles, cap, nullptr))
             return false;
-        mvaddnstr((int) i + 2, 1, row, columns - 2);
+        for (size_t j = 0; row[j] != '\0'; ++j)
+            mvaddch((int) i + 2, (int) j + 1, (chtype) (unsigned char) row[j] | attributes(styles[j]));
     }
     mvhline(rows - 4, 0, ACS_HLINE, columns);
     attron(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
@@ -235,6 +255,8 @@ int main(int argc, char **argv) {
         init_pair(TUI_PAIR_ACCENT, COLOR_MAGENTA, -1);
         init_pair(TUI_PAIR_STATUS, COLOR_WHITE, -1);
         init_pair(TUI_PAIR_INPUT, COLOR_GREEN, -1);
+        init_pair(TUI_PAIR_CODE, COLOR_YELLOW, -1);
+        init_pair(TUI_PAIR_ERROR, COLOR_RED, -1);
     }
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
@@ -248,6 +270,7 @@ int main(int argc, char **argv) {
 #endif
     mousemask(mask, nullptr);
     char *row = nullptr;
+    uint8_t *styles = nullptr;
     size_t capacity = 0;
     bool focused = true;
     bool sessionFailed = false;
@@ -256,7 +279,9 @@ int main(int argc, char **argv) {
         if (completed) {
             const char *text = SessionBridge_getText(&bridge);
             const char *label = completed > 0 ? "OpenCode:" : "Connection error:";
-            ok = Tui_add(&state, label, strlen(label)) && Tui_add(&state, text, strlen(text));
+            uint8_t role = completed > 0 ? TEXT_STYLE_ASSISTANT : TEXT_STYLE_ERROR;
+            ok = Tui_addStyled(&state, label, strlen(label), role | TEXT_STYLE_BOLD, false) &&
+                 Tui_addStyled(&state, text, strlen(text), 0, completed > 0);
             sessionFailed = completed < 0;
         }
         int rows, columns;
@@ -272,10 +297,16 @@ int main(int argc, char **argv) {
                 break;
             }
             row = next;
+            uint8_t *nextStyles = realloc(styles, (size_t) columns + 1);
+            if (nextStyles == nullptr) {
+                ok = false;
+                break;
+            }
+            styles = nextStyles;
             capacity = (size_t) columns + 1;
         }
         if (ok && Tui_isDirty(&state)) {
-            ok = draw(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, capacity);
+            ok = draw(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, styles, capacity);
             Tui_setDirty(&state, false);
         }
         if (!ok)
@@ -348,7 +379,8 @@ int main(int argc, char **argv) {
                 continue;
             if (sessionMode && !SessionBridge_submit(&bridge, Tui_getInput(&state)))
                 continue;
-            ok = Tui_add(&state, "You:", 4) && Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state));
+            ok = Tui_addStyled(&state, "You:", 4, TEXT_STYLE_USER | TEXT_STYLE_BOLD, false) &&
+                 Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state));
             if (ok)
                 Tui_inputClear(&state);
         } else if (focused && (key == KEY_BACKSPACE || key == 127 || key == '\b'))
@@ -360,6 +392,7 @@ int main(int argc, char **argv) {
     endwin();
     delscreen(screen);
     free(row);
+    free(styles);
     Tui_free(&state);
     if (ok && connectRequested)
         return connectHost(sessionHost, owo);
