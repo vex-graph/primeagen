@@ -5,4 +5,5 @@
  * tools, prompt rewriting or model behavior is controlled by this module. */
 const char *Owo_greeting(bool enabled);
 const char *Owo_status(bool enabled);
+const char *Owo_instructions(bool enabled);
 #endif
