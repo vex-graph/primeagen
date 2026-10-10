@@ -28,7 +28,7 @@ Core operations:
   - ask(prompt)        : model/action/tool loop with retained completed steps
   - reset()            : detach conversation events; tool artifacts survive
 Module-private validation:
-  - strict_json(text) / local pairs(items) : reject duplicate action fields
+  - strict_json(text) : shared duplicate-field/depth admission for model actions
 
 Malformed model steps preserve the previously committed history. Completed tool
 steps remain observable after a later failure; side effects are not rolled back.
@@ -37,6 +37,7 @@ or child resources, or invokes an interpreted Func runtime. Owner-thread-only.
 ============================================================================
 """
 import json
+from json_input import loads
 
 DEFAULT_MAX_STEPS = 16
 DEFAULT_HISTORY_CAP = 512 * 1024
@@ -54,14 +55,7 @@ The transcript below is a JSON array of role-tagged events. Continue the convers
 
 def strict_json(text):
     """Reject duplicate keys instead of letting later fields replace consent intent."""
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError("duplicate action field")
-            result[key] = value
-        return result
-    return json.loads(text, object_pairs_hook=pairs)
+    return loads(text)
 
 
 class Agent:
