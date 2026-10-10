@@ -1,6 +1,7 @@
 #include "tui/tui.h"
 #include "tui/event/mouse_event.h"
 #include "personality/owo.h"
+#include "session/session_bridge.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 #include "exception/throw.h"
@@ -10,12 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 ;;DEFINITION
 /* The C23 terminal preview owns ncurses screen admission and restoration, not an
  * AI conversation. It renders a borrowed Tui into an alternate screen, keeps the
  * input anchored, and normalizes keys/mouse events into display operations. Text
- * submission appends locally, never contacts providers or executes tools. A
+ * submission appends locally by default. Explicit host-provided bridge pipes
+ * route admitted turns through API Haven to an OpenCode session host. A
  * signal only requests shutdown; normal control flow restores the terminal.
  */
 ;;OVERVIEW
@@ -24,23 +27,26 @@
  * ============================================================================
  * OWNED STATE:
  *   static volatile sig_atomic_t stopped : signal-safe shutdown request only.
- *   main locals own Tui, ncurses SCREEN and growable row projection buffer.
+ *   main locals own Tui, SessionBridge, ncurses SCREEN and growable row buffer.
  * FUNCTION REGISTRY:
  * ----------------------------------------------------------------------------
  * Private helpers:
  *   static void stop(int signalNumber) : flag shutdown; no terminal API/logging.
- *   static bool draw(Tui *state, bool owo, bool focused, char *row, size_t cap)
+ *   static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, size_t cap)
  *     Draw header/buttons, wrapped viewport, fixed input/status and cursor.
  * Entry:
  *   int main(int argc, char **argv)
- *     --owo / --help admission; tty/newterm; mouse/key dispatch; restore/free.
+ *     --owo / --help / paired host --bridge-read/write fd admission;
+ *     tty/newterm; mouse/key/session polling; restore/free.
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
  *   Small terminals show resize guidance; quit remains available by Ctrl-Q.
  *   Mouse support depends on terminal; keyboard provides PgUp/PgDn, End,
  *   Ctrl-L clear, Tab focus, Enter append, Backspace, Ctrl-Q quit. Resize recalculates all
  *   bounds. Input is printable ASCII; transcript controls are escaped by Tui.
- *   No worker/provider/tool; getch uses named 100ms cancellation slices. Screen
+ *   Default has no worker/provider/tool. Session host owns external IO; native
+ *   bridge consumes Haven jobs without blocking. Busy Enter preserves input;
+ *   Clear changes display only, not remote history. getch uses 100ms slices. Screen
  *   calls are host terminal IO, not a realtime/bounded-join guarantee. Normal
  *   exits/SIGINT/SIGTERM restore mode; SIGKILL/crashes cannot promise restoration.
  * ============================================================================
@@ -54,7 +60,7 @@ static void stop(int signalNumber) {
     stopped = 1;
 }
 
-static bool draw(Tui *state, bool owo, bool focused, char *row, size_t cap) {
+static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, size_t cap) {
     int rows, columns;
     Tui_getSize(state, &rows, &columns);
     erase();
@@ -82,7 +88,8 @@ static bool draw(Tui *state, bool owo, bool focused, char *row, size_t cap) {
     size_t width = (size_t) columns - 3;
     size_t offset = length > width ? length - width : 0;
     mvaddnstr(rows - 2, 2, Tui_getInput(state) + offset, (int) width);
-    mvaddnstr(rows - 1, 0, Owo_status(owo), columns - 1);
+    const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | tools denied | Enter sends") : Owo_status(owo);
+    mvaddnstr(rows - 1, 0, status, columns - 1);
     curs_set(focused ? 1 : 0);
     move(rows - 2, 2 + (int) (length - offset));
     return refresh() != ERR;
@@ -90,9 +97,23 @@ static bool draw(Tui *state, bool owo, bool focused, char *row, size_t cap) {
 
 int main(int argc, char **argv) {
     bool owo = false;
+    int readFd = -1, writeFd = -1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--owo") == 0)
             owo = true;
+        else if ((strcmp(argv[i], "--bridge-read") == 0 || strcmp(argv[i], "--bridge-write") == 0) && i + 1 < argc) {
+            bool reading = strcmp(argv[i], "--bridge-read") == 0;
+            char *end;
+            long value = strtol(argv[++i], &end, 10);
+            if (*end || value < 3 || value > 65535) {
+                THROW("invalid host bridge descriptor");
+                return 1;
+            }
+            if (reading)
+                readFd = (int) value;
+            else
+                writeFd = (int) value;
+        }
         else if (strcmp(argv[i], "--help") == 0) {
             puts("primeagen tui [--owo]: offline C23 ncurses preview; Ctrl-Q exits");
             return 0;
@@ -101,17 +122,35 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+    bool sessionMode = readFd >= 0 && writeFd >= 0;
+    int readFlags = sessionMode ? fcntl(readFd, F_GETFL) : 0;
+    int writeFlags = sessionMode ? fcntl(writeFd, F_GETFL) : 0;
+    if ((readFd >= 0) != (writeFd >= 0) || (sessionMode &&
+        (readFd == writeFd || readFlags < 0 || writeFlags < 0 ||
+         !(readFlags & O_NONBLOCK) || !(writeFlags & O_NONBLOCK)))) {
+        THROW("host bridge requires paired nonblocking descriptors");
+        return 1;
+    }
     if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
         THROW("TUI requires terminal stdin and stdout");
         return 1;
     }
     Tui state = Tui();
+    SessionBridge bridge = SessionBridge(readFd, writeFd);
+    SessionBridge_setOwo(&bridge, owo);
     if (!Tui_isReady(&state))
         return 1;
-    const char *greeting = Owo_greeting(owo);
+    const char *greeting = sessionMode ? "Primeagen | OpenCode-backed chat; no model request until Enter" : Owo_greeting(owo);
     if (!Tui_add(&state, greeting, strlen(greeting))) {
         Tui_free(&state);
         return 1;
+    }
+    if (sessionMode) {
+        const char *notice = "OpenCode session | tools denied | Enter sends | Clear is display-only | Ctrl-Q exits";
+        if (!Tui_add(&state, notice, strlen(notice))) {
+            Tui_free(&state);
+            return 1;
+        }
     }
     SCREEN *screen = newterm(nullptr, stdout, stdin);
     if (screen == nullptr) {
@@ -121,6 +160,7 @@ int main(int argc, char **argv) {
     }
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
+    signal(SIGPIPE, SIG_IGN);
     bool ok = cbreak() != ERR && noecho() != ERR && keypad(stdscr, true) != ERR;
     timeout(TUI_POLL_MS);
     mouseinterval(0);
@@ -132,7 +172,14 @@ int main(int argc, char **argv) {
     char *row = nullptr;
     size_t capacity = 0;
     bool focused = true;
+    bool sessionFailed = false;
     while (ok && !stopped) {
+        int completed = SessionBridge_poll(&bridge);
+        if (completed) {
+            const char *text = SessionBridge_getText(&bridge);
+            ok = Tui_add(&state, text, strlen(text));
+            sessionFailed = completed < 0;
+        }
         int rows, columns;
         getmaxyx(stdscr, rows, columns);
         int oldRows, oldColumns;
@@ -149,7 +196,7 @@ int main(int argc, char **argv) {
             capacity = (size_t) columns + 1;
         }
         if (ok && Tui_isDirty(&state)) {
-            ok = draw(&state, owo, focused, row, capacity);
+            ok = draw(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, capacity);
             Tui_setDirty(&state, false);
         }
         if (!ok)
@@ -197,6 +244,10 @@ int main(int argc, char **argv) {
         else if (key == KEY_RESIZE)
             Tui_setDirty(&state, true);
         else if (focused && (key == '\n' || key == KEY_ENTER)) {
+            if (sessionMode && (sessionFailed || SessionBridge_isBusy(&bridge) || Tui_getInputLength(&state) == 0))
+                continue;
+            if (sessionMode && !SessionBridge_submit(&bridge, Tui_getInput(&state)))
+                continue;
             ok = Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state));
             if (ok)
                 Tui_inputClear(&state);
@@ -205,6 +256,7 @@ int main(int argc, char **argv) {
         else if (focused && key >= ' ' && key <= '~')
             ok = Tui_inputAddChar(&state, key);
     }
+    SessionBridge_free(&bridge);
     endwin();
     delscreen(screen);
     free(row);
