@@ -1,6 +1,7 @@
 #include "ai/ai_chat.h"
 #include "ai/ai_chat_anthropic.h"
 #include "space/message.h"
+#include "personality/owo.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,8 +25,10 @@
  * ----------------------------------------------------------------------------
  * Public CLI entry:
  *   - main(argc, argv)
- *       request openai|anthropic model base < transcript
+ *       request openai|anthropic model base [--owo] < transcript
  *       Emits exactly URL + newline + request JSON on successful admission.
+ *       Optional Owo_instructions prefixes host style guidance to user content;
+ *       this is not a vendor system-role priority or model-compliance claim.
  *
  * Consumed public seams (not declarations owned by this module):
  *   - Message(...) / Message_getText(message)
@@ -53,11 +56,13 @@
 
 /* Own a bounded transcript through the duration of request rendering. */
 int main(int argc, char **argv) {
-    if (argc != 4 || (strcmp(argv[1], "openai") != 0 && strcmp(argv[1], "anthropic") != 0)) {
+    if ((argc != 4 && argc != 5) || (argc == 5 && strcmp(argv[4], "--owo") != 0) || (strcmp(argv[1], "openai") != 0 && strcmp(argv[1], "anthropic") != 0)) {
         THROW("primeagen request: invalid arguments");
         return 1;
     }
-    char *input = malloc(INPUT_CAP + 1);
+    const char *instructions = Owo_instructions(argc == 5);
+    size_t prefix = strlen(instructions);
+    char *input = malloc(INPUT_CAP + prefix + 1);
     size_t bodyCap = INPUT_CAP * 6u + ENVELOPE_CAP;
     char *body = malloc(bodyCap);
     if (input == nullptr || body == nullptr) {
@@ -66,8 +71,10 @@ int main(int argc, char **argv) {
         THROW("primeagen request: allocation failed");
         return 1;
     }
-    size_t length = fread(input, 1, INPUT_CAP, stdin);
-    bool ok = length != 0 && !ferror(stdin) && fgetc(stdin) == EOF && memchr(input, 0, length) == nullptr;
+    memcpy(input, instructions, prefix);
+    size_t length = fread(input + prefix, 1, INPUT_CAP, stdin);
+    bool ok = length != 0 && !ferror(stdin) && fgetc(stdin) == EOF && memchr(input + prefix, 0, length) == nullptr;
+    length += prefix;
     input[length] = '\0';
     if (!ok)
         THROW("primeagen request: invalid transcript");
