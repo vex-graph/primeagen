@@ -51,7 +51,7 @@ def build(output, compiler="clang", sanitizer=False):
         flags += ["-Wl,--gc-sections"]
     if sanitizer:
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-    sources = [ROOT / "native/request.c", harness / "space/message.c",
+    sources = [ROOT / "native/request.c", ROOT / "personality/owo.c", harness / "space/message.c",
                api / "ai/ai_chat.c", api / "ai/ai_chat_anthropic.c",
                api / "ai/ai_provider.c", api / "api/auth.c", spoke / "net/json.c"]
     output = Path(output).absolute()
@@ -60,7 +60,7 @@ def build(output, compiler="clang", sanitizer=False):
         raise ValueError("invalid build output")
     with tempfile.TemporaryDirectory(prefix=".primeagen-build-", dir=output.parent) as temp:
         artifact = Path(temp) / "request"
-        argv = [compiler, *flags, "-I", str(api), "-I", str(harness), "-I", str(spoke),
+        argv = [compiler, *flags, "-I", str(ROOT), "-I", str(api), "-I", str(harness), "-I", str(spoke),
                 *(str(source) for source in sources), "-o", str(artifact)]
         run(argv, timeout=120)
         os.replace(artifact, output)
