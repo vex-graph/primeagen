@@ -19,7 +19,9 @@ Consent:
                               noninteractive input denies without execution
 Lifecycle / CLI:
   - main() : explicit doctor or chat; construct borrowed provider/tools; dispatch
-             prompts; /new resets history; /quit/EOF/cancel release tool artifacts
+              prompts; /new resets history; /quit/EOF/cancel release tool artifacts
+  - consumed load_env(path) : chat-only project-root private credential admission;
+                             shell environment takes precedence, no file execution
 
 Doctor reports dependency presence without contacting providers. Chat requires
 an explicit backend/model and may send retained conversation/tool results to it.
@@ -36,6 +38,7 @@ import sys
 from agent import Agent
 from provider import Provider
 from tools import Tools
+from env_file import load_env
 
 
 def display(text):
@@ -74,6 +77,7 @@ def main():
         parser.error("chat requires --provider and --model")
     tools = None
     try:
+        load_env(Path(__file__).resolve().parent.parent / ".env")
         provider = Provider(args.provider, args.model, args.base_url, args.timeout, owo=args.owo)
         tools = Tools(args.workspace, approve, args.func, args.timeout)
         agent = Agent(provider, tools, args.max_steps)
