@@ -28,6 +28,11 @@ reverse dependencies. No GUI/window/memory subsystem is implemented here.
 The requested native direction starts with a C23 ncurses frontend in `cli/` over
 the independently owned `tui/` model and `tui/event/` normalized terminal-cell
 events. This offline preview does not replace the Python provider/agent loop yet.
+The launcher defaults to this disconnected frontend. Its local `/connect` restores
+the terminal before invoking the existing Python session host on the expressly
+selected Go Flash model, reusing OpenCode login. No key entry/auth copying or
+tool approvals are added. Unsupported slash commands stay local. This is a
+transitional connected frontend, not a completed C runtime or server/channel UI.
 Personality `personality/owo.c` owns canonical AI speech-style instructions, never
 consent or tool policy. Explicit chat --owo selects native prompt injection;
 offline TUI greeting/status only reflect that mode. Prompt guidance is not model
