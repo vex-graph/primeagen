@@ -56,6 +56,7 @@ def main():
     parser.add_argument("command", choices=["chat", "doctor"])
     parser.add_argument("--provider", choices=["openai", "anthropic", "local"])
     parser.add_argument("--model")
+    parser.add_argument("--owo", action="store_true", help="use canonical C AI personality instructions")
     parser.add_argument("--base-url")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--func", type=Path)
@@ -73,7 +74,7 @@ def main():
         parser.error("chat requires --provider and --model")
     tools = None
     try:
-        provider = Provider(args.provider, args.model, args.base_url, args.timeout)
+        provider = Provider(args.provider, args.model, args.base_url, args.timeout, owo=args.owo)
         tools = Tools(args.workspace, approve, args.func, args.timeout)
         agent = Agent(provider, tools, args.max_steps)
         print("Primeagen · /new resets history · /quit exits · tools always ask permission")
