@@ -53,3 +53,9 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Local outputs and private session state; never ignore test sources.
+.build/
+__pycache__/
+*.pyc
+.env
