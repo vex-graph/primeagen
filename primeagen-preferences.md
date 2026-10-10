@@ -38,6 +38,12 @@ consent or tool policy. Explicit chat --owo selects native prompt injection;
 offline TUI greeting/status only reflect that mode. Prompt guidance is not model
 compliance or vendor system-role proof. Vexspoke's actual JSON string writer is consumed, not duplicated.
 Display buffers use cold growable C storage; no realtime/backend-trust claim.
+Terminal Markdown is a Primeagen presentation adapter, not a guessed Vexspoke API.
+Tui sanitizes controls before parsing and owns parallel visible-byte style flags;
+ncurses maps only host-defined flags, never model ANSI. Formatting precedes wrap,
+compact prose does not change remote messages, and fenced code whitespace remains
+literal. The flat subset and emphasis fallback do not imply CommonMark/Unicode
+or appearance acceptance. Styling owns no transport, credentials or permission.
 
 Explicit `session --engine opencode` consumes API Haven's existing EngineProvider
 and Harness_run/poll/cancel contracts through a native SessionBridge. The standalone
