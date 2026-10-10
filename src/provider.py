@@ -15,13 +15,14 @@ INSTANCE FIELDS (in construction order):
     model;        // validated host-selected model identifier
     base;         // validated explicit/default URL without credential/query
     timeout;      // caller-selected whole-child deadline in seconds
-    bridge;       // borrowed native binding executable path
+     bridge;       // borrowed native binding executable path
+     owo;          // explicit optional canonical C personality prompt selection
   }
 
 FUNCTION REGISTRY:
 ----------------------------------------------------------------------------
 Constructors:
-  - Provider(family, model, base, timeout, bridge)
+   - Provider(family, model, base, timeout, bridge, owo)
 Core operations:
   - render(transcript) : real Harness admission + API Haven request envelope
   - complete(transcript) : isolated host transport and response-text extraction
@@ -49,7 +50,9 @@ DEFAULT_BASES = {"openai": "https://api.openai.com/v1", "anthropic": "https://ap
 
 class Provider:
     """Immutable configuration; bounded complete() returns text, never executes it."""
-    def __init__(self, family, model, base=None, timeout=60.0, bridge=None):
+    def __init__(self, family, model, base=None, timeout=60.0, bridge=None, owo=False):
+        if type(owo) is not bool:
+            raise ValueError("invalid personality selection")
         if family not in DEFAULT_BASES or not model or any(ord(c) < 32 for c in model) or len(model) > 256:
             raise ValueError("invalid provider or model")
         self.family, self.model = family, model
@@ -76,13 +79,14 @@ class Provider:
             raise ValueError("Anthropic base must omit the trailing /v1")
         self.timeout = timeout
         self.bridge = Path(bridge or os.environ.get("PRIMEAGEN_REQUEST", ROOT / ".build/request"))
+        self.owo = owo
 
     def render(self, transcript):
         """R4 Message admits borrowed text; API Haven renders the wire envelope."""
         if not self.bridge.is_file():
             raise ValueError("native request binding missing; run python3 build.py")
         wire = "anthropic" if self.family == "anthropic" else "openai"
-        data = run([str(self.bridge), wire, self.model, self.base],
+        data = run([str(self.bridge), wire, self.model, self.base, *(["--owo"] if self.owo else [])],
                    data=transcript.encode(), timeout=self.timeout, cap=8 * 1024 * 1024)
         url, body = data.decode().split("\n", 1)
         return url, body
