@@ -17,7 +17,9 @@
 /* The C23 terminal preview owns ncurses screen admission and restoration, not an
  * AI conversation. It renders a borrowed Tui into an alternate screen, keeps the
  * input anchored, and normalizes keys/mouse events into display operations. Text
- * submission appends locally by default. Explicit host-provided bridge pipes
+ * submission requires connection, not silent local echo. /connect restores the
+ * terminal before replacing this process with the existing session host.
+ * Explicit host-provided bridge pipes
  * route admitted turns through API Haven to an OpenCode session host. A
  * signal only requests shutdown; normal control flow restores the terminal.
  */
@@ -28,23 +30,31 @@
  * OWNED STATE:
  *   static volatile sig_atomic_t stopped : signal-safe shutdown request only.
  *   main locals own Tui, SessionBridge, ncurses SCREEN and growable row buffer.
+ *   sessionHost is a borrowed launcher-supplied path; no credentials are owned.
+ * COLOR: draw() applies a 4-entry palette (TUI_PAIR_HEADER/ACCENT/STATUS/INPUT),
+ *   initialized only when has_colors(). A monochrome terminal falls back to the
+ *   default attributes (COLOR_PAIR yields 0), so behavior is unchanged there.
  * FUNCTION REGISTRY:
  * ----------------------------------------------------------------------------
  * Private helpers:
  *   static void stop(int signalNumber) : flag shutdown; no terminal API/logging.
  *   static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, size_t cap)
  *     Draw header/buttons, wrapped viewport, fixed input/status and cursor.
+ *   static int command(Tui *, bool) : local slash dispatch; connect/quit actions.
+ *   static int connectHost(const char *, bool) : exec existing adapter on Go Flash.
  * Entry:
  *   int main(int argc, char **argv)
- *     --owo / --help / paired host --bridge-read/write fd admission;
+ *     --owo / --help / --session-host / paired host --bridge-read/write fd admission;
  *     tty/newterm; mouse/key/session polling; restore/free.
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
  *   Small terminals show resize guidance; quit remains available by Ctrl-Q.
  *   Mouse support depends on terminal; keyboard provides PgUp/PgDn, End,
- *   Ctrl-L clear, Tab focus, Enter append, Backspace, Ctrl-Q quit. Resize recalculates all
+ *   Ctrl-L clear, Tab focus, Enter send, Backspace, Ctrl-Q quit. Resize recalculates all
  *   bounds. Input is printable ASCII; transcript controls are escaped by Tui.
- *   Default has no worker/provider/tool. Session host owns external IO; native
+ *   Default is disconnected. /connect explicitly starts the existing Python host
+ *   using OpenCode login; no pasted keys, approval calls or tool execution.
+ *   Session host owns external IO; native
  *   bridge consumes Haven jobs without blocking. Busy Enter preserves input;
  *   Clear changes display only, not remote history. getch uses 100ms slices. Screen
  *   calls are host terminal IO, not a realtime/bounded-join guarantee. Normal
@@ -54,10 +64,56 @@
 #define TUI_POLL_MS 100 /* Shutdown checks between idle terminal reads. */
 #define TUI_CTRL_Q 17
 #define TUI_CTRL_L 12
+#define TUI_COMMAND_MESSAGE 1
+#define TUI_COMMAND_CONNECT 2
+#define TUI_COMMAND_QUIT 3
+#define TUI_CONNECT_MODEL "opencode-go/deepseek-v4.1-flash"
+enum { TUI_PAIR_HEADER = 1, TUI_PAIR_ACCENT = 2, TUI_PAIR_STATUS = 3, TUI_PAIR_INPUT = 4 };
 static volatile sig_atomic_t stopped;
 static void stop(int signalNumber) {
     (void) signalNumber;
     stopped = 1;
+}
+
+/* Slash input is local; unimplemented commands are never model prompts. */
+static int command(Tui *state, bool sessionMode) {
+    const char *input = Tui_getInput(state);
+    if (*input != '/')
+        return 0;
+    if (strcmp(input, "/quit") == 0)
+        return TUI_COMMAND_QUIT;
+    if (strcmp(input, "/connect") == 0 && !sessionMode)
+        return TUI_COMMAND_CONNECT;
+    if (strcmp(input, "/clear") == 0) {
+        Tui_clear(state);
+        Tui_inputClear(state);
+        return TUI_COMMAND_MESSAGE;
+    }
+    const char *notice;
+    if (strcmp(input, "/help") == 0)
+        notice = "/connect: existing OpenCode Go login | /clear: display only | /quit: exit. Chat-only; settings/servers are not implemented yet.";
+    else if (strcmp(input, "/connect") == 0)
+        notice = "Already connected to OpenCode. Enter sends; remote history is retained. Tools remain denied.";
+    else
+        notice = "Unknown or unfinished command. /help lists working commands. This command was not sent to OpenCode.";
+    if (!Tui_add(state, notice, strlen(notice)))
+        return -1;
+    Tui_inputClear(state);
+    return TUI_COMMAND_MESSAGE;
+}
+
+/* Terminal must be restored first. Never transfer keys or copy auth files. */
+static int connectHost(const char *path, bool owo) {
+    if (path == nullptr || *path == '\0') {
+        THROW("connect requires the primeagen launcher; run ./primeagen tui");
+        return 1;
+    }
+    if (owo)
+        execlp("python3", "python3", path, "--engine", "opencode", "--model", TUI_CONNECT_MODEL, "--owo", (char*) nullptr);
+    else
+        execlp("python3", "python3", path, "--engine", "opencode", "--model", TUI_CONNECT_MODEL, (char*) nullptr);
+    THROW("could not start existing OpenCode session host");
+    return 1;
 }
 
 static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, size_t cap) {
@@ -69,9 +125,13 @@ static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy
         curs_set(0);
         return refresh() != ERR;
     }
+    attron(COLOR_PAIR(TUI_PAIR_HEADER) | A_BOLD);
     mvaddnstr(0, 1, "Primeagen", columns - 16);
+    attroff(COLOR_PAIR(TUI_PAIR_HEADER) | A_BOLD);
+    attron(COLOR_PAIR(TUI_PAIR_ACCENT));
     mvaddstr(0, columns - 15, "[Clear]");
     mvaddstr(0, columns - 7, "[Quit]");
+    attroff(COLOR_PAIR(TUI_PAIR_ACCENT));
     mvhline(1, 0, ACS_HLINE, columns);
     size_t first = Tui_getFirstVisibleRow(state);
     size_t total = Tui_getVisualRowCount(state);
@@ -82,14 +142,20 @@ static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy
         mvaddnstr((int) i + 2, 1, row, columns - 2);
     }
     mvhline(rows - 4, 0, ACS_HLINE, columns);
-    mvaddnstr(rows - 3, 1, "PgUp/PgDn scroll | Ctrl-L clear | Ctrl-Q quit", columns - 2);
+    attron(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
+    mvaddnstr(rows - 3, 1, sessionMode ? "/help | PgUp/PgDn scroll | Ctrl-Q quit" : "/connect (click here) | /help | Ctrl-Q quit", columns - 2);
+    attroff(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
+    attron(COLOR_PAIR(TUI_PAIR_INPUT) | A_BOLD);
     mvaddstr(rows - 2, 0, "> ");
+    attroff(COLOR_PAIR(TUI_PAIR_INPUT) | A_BOLD);
     size_t length = Tui_getInputLength(state);
     size_t width = (size_t) columns - 3;
     size_t offset = length > width ? length - width : 0;
     mvaddnstr(rows - 2, 2, Tui_getInput(state) + offset, (int) width);
-    const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | tools denied | Enter sends") : Owo_status(owo);
+    const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | tools denied | Enter sends") : (owo ? "OwO | disconnected | /connect uses Go login" : "Disconnected | /connect uses OpenCode Go login");
+    attron(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
     mvaddnstr(rows - 1, 0, status, columns - 1);
+    attroff(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
     curs_set(focused ? 1 : 0);
     move(rows - 2, 2 + (int) (length - offset));
     return refresh() != ERR;
@@ -97,10 +163,14 @@ static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy
 
 int main(int argc, char **argv) {
     bool owo = false;
+    const char *sessionHost = nullptr;
+    bool connectRequested = false;
     int readFd = -1, writeFd = -1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--owo") == 0)
             owo = true;
+        else if (strcmp(argv[i], "--session-host") == 0 && i + 1 < argc)
+            sessionHost = argv[++i];
         else if ((strcmp(argv[i], "--bridge-read") == 0 || strcmp(argv[i], "--bridge-write") == 0) && i + 1 < argc) {
             bool reading = strcmp(argv[i], "--bridge-read") == 0;
             char *end;
@@ -115,7 +185,7 @@ int main(int argc, char **argv) {
                 writeFd = (int) value;
         }
         else if (strcmp(argv[i], "--help") == 0) {
-            puts("primeagen tui [--owo]: offline C23 ncurses preview; Ctrl-Q exits");
+            puts("primeagen tui [--owo]: starts offline; /connect uses existing OpenCode Go login; /help; Ctrl-Q exits");
             return 0;
         } else {
             THROW("unknown TUI argument");
@@ -140,7 +210,7 @@ int main(int argc, char **argv) {
     SessionBridge_setOwo(&bridge, owo);
     if (!Tui_isReady(&state))
         return 1;
-    const char *greeting = sessionMode ? "Primeagen | OpenCode-backed chat; no model request until Enter" : Owo_greeting(owo);
+    const char *greeting = sessionMode ? "Primeagen | OpenCode-backed chat; no model request until Enter" : "Primeagen | Type /connect or click /connect below to chat with OpenCode Go. No key is copied; uses your existing login.";
     if (!Tui_add(&state, greeting, strlen(greeting))) {
         Tui_free(&state);
         return 1;
@@ -157,6 +227,14 @@ int main(int argc, char **argv) {
         Tui_free(&state);
         THROW("terminal initialization failed");
         return 1;
+    }
+    if (has_colors()) {
+        start_color();
+        use_default_colors();
+        init_pair(TUI_PAIR_HEADER, COLOR_CYAN, -1);
+        init_pair(TUI_PAIR_ACCENT, COLOR_MAGENTA, -1);
+        init_pair(TUI_PAIR_STATUS, COLOR_WHITE, -1);
+        init_pair(TUI_PAIR_INPUT, COLOR_GREEN, -1);
     }
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
@@ -177,7 +255,8 @@ int main(int argc, char **argv) {
         int completed = SessionBridge_poll(&bridge);
         if (completed) {
             const char *text = SessionBridge_getText(&bridge);
-            ok = Tui_add(&state, text, strlen(text));
+            const char *label = completed > 0 ? "OpenCode:" : "Connection error:";
+            ok = Tui_add(&state, label, strlen(label)) && Tui_add(&state, text, strlen(text));
             sessionFailed = completed < 0;
         }
         int rows, columns;
@@ -219,6 +298,11 @@ int main(int argc, char **argv) {
                 kind = TUI_MOUSE_CLICK;
             else
                 continue;
+            if (!sessionMode && kind == TUI_MOUSE_CLICK && event.y == rows - 3 && event.x >= 1 && event.x <= 10) {
+                connectRequested = true;
+                stopped = 1;
+                continue;
+            }
             TuiMouseAction action = TuiMouse_dispatch(&state, event.x, event.y, kind);
             if (action == TUI_MOUSE_QUIT)
                 stopped = 1;
@@ -244,11 +328,27 @@ int main(int argc, char **argv) {
         else if (key == KEY_RESIZE)
             Tui_setDirty(&state, true);
         else if (focused && (key == '\n' || key == KEY_ENTER)) {
+            int action = command(&state, sessionMode);
+            if (action != 0) {
+                if (action < 0)
+                    ok = false;
+                else if (action == TUI_COMMAND_CONNECT) {
+                    connectRequested = true;
+                    stopped = 1;
+                } else if (action == TUI_COMMAND_QUIT)
+                    stopped = 1;
+                continue;
+            }
+            if (!sessionMode) {
+                const char *notice = "Not sent: disconnected. Use /connect first (existing Go login), then type your message. No local echo is a model reply.";
+                ok = Tui_add(&state, notice, strlen(notice));
+                continue;
+            }
             if (sessionMode && (sessionFailed || SessionBridge_isBusy(&bridge) || Tui_getInputLength(&state) == 0))
                 continue;
             if (sessionMode && !SessionBridge_submit(&bridge, Tui_getInput(&state)))
                 continue;
-            ok = Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state));
+            ok = Tui_add(&state, "You:", 4) && Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state));
             if (ok)
                 Tui_inputClear(&state);
         } else if (focused && (key == KEY_BACKSPACE || key == 127 || key == '\b'))
@@ -261,6 +361,8 @@ int main(int argc, char **argv) {
     delscreen(screen);
     free(row);
     Tui_free(&state);
+    if (ok && connectRequested)
+        return connectHost(sessionHost, owo);
     if (!ok)
         THROW("TUI operation failed; terminal restored");
     return ok ? 0 : 1;
