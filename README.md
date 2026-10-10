@@ -77,7 +77,13 @@ Input editing is currently printable ASCII; other transcript bytes are escaped.
 Automated headless ncurses cell assertions are not appearance or real-terminal
 mouse acceptance. Normal exit and SIGINT/SIGTERM restore the terminal; crashes
 and SIGKILL cannot promise restoration. Windows/Linux builds remain unproved.
-The `--owo` switch selects playful greeting/status only, never permissions.
+`personality/owo.c` owns AI prompt instructions: playful human-facing prose,
+without changing task completion, code, JSON/tool arguments or consent. Enable
+them in the current agent with `./primeagen chat --provider openai --model YOUR_MODEL --owo`
+after `python3 build.py`. The native request adapter prefixes these instructions
+to message content; vendor system-role priority and live model compliance are
+not proven. The offline TUI also identifies the selected mode in greeting/status,
+but does not contact a model.
 
 - First model protocol is strict JSON **text**, not native structured tool calls;
   providers/models that do not follow it reject. No streaming, retries, native
