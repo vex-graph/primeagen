@@ -34,6 +34,15 @@ Explicit `session` connects this same terminal to a dedicated OpenCode chat sess
 with retained server history and final answers (not streaming). Automated fake
 CLI/pipe owners prove local wiring, not live Go entitlement or permission enforcement.
 
+Model replies now use a small **C terminal Markdown adapter**: bold, emphasis
+(portable underline fallback), headings, yellow inline/fenced code, and colored
+speaker labels. Markers are removed before wrapping; repeated prose blank lines
+compact to one while fenced code spaces and blank lines stay literal. Terminal
+control bytes remain escaped, not executable. Strict/sanitized numeric and
+headless ncurses owners check visible bytes and actual cell attributes, not
+interactive appearance. This is a flat subset, not CommonMark: nested inline
+styles, links, tables, Unicode cell layout and syntax highlighting are not offered.
+
 ## Inspiration and name
 
 Inspired by **PAIcom's personal computer-assistant idea**, and by the CLI-first
