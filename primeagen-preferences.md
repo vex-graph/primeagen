@@ -28,8 +28,10 @@ reverse dependencies. No GUI/window/memory subsystem is implemented here.
 The requested native direction starts with a C23 ncurses frontend in `cli/` over
 the independently owned `tui/` model and `tui/event/` normalized terminal-cell
 events. This offline preview does not replace the Python provider/agent loop yet.
-Personality `personality/owo.c` selects presentation prose only, never consent or
-tool policy. Vexspoke's actual JSON string writer is consumed, not duplicated.
+Personality `personality/owo.c` owns canonical AI speech-style instructions, never
+consent or tool policy. Explicit chat --owo selects native prompt injection;
+offline TUI greeting/status only reflect that mode. Prompt guidance is not model
+compliance or vendor system-role proof. Vexspoke's actual JSON string writer is consumed, not duplicated.
 Display buffers use cold growable C storage; no realtime/backend-trust claim.
 
 ### Explicit Tool Consent Law
