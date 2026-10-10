@@ -10,18 +10,24 @@ builders. Func is invoked as an independent compile-time tool, never embedded.
 Implemented: explicit OpenAI-compatible, Anthropic and loopback-local model
 configuration; a strict JSON-text answer/tool loop; interactive approval for every
 read/build/run; workspace-confined reads; real Func compilation and separately
-approved artifact execution. No other coding-agent CLI is used as our agent.
+approved artifact execution. That original `chat` mode uses our own agent loop.
+Optional `session` mode now uses OpenCode V2 as the agent engine through API
+Haven's actual EngineProvider/Harness job callbacks. Its login/model configuration
+(including Go when configured) stays with OpenCode; Primeagen reads no auth files.
 
 This is an initial implementation, not production-ready. Offline owner evidence
-lives in `tests/primeagen` in the workspace's independent tests checkout. Live
-provider behavior, macOS 14 runtime, Windows and GUI integration are unproven.
+lives in `tests/primeagen` in the workspace's independent tests checkout.
+Direct-provider behavior, macOS 14 runtime, Windows and GUI integration are unproven.
 The existing R4 message value is reused, not a claim that Harness's planned agent
 objects or server are implemented.
 
 The new **C23 ncurses TUI** lives in `cli/` and `tui/`, with normalized mouse
 events in `tui/event/`. It is an offline interface preview, not yet the native
-agent replacement: local text entry, wrapped transcript scrolling, fixed input,
+agent replacement: default local text entry, wrapped transcript scrolling, fixed input,
 clickable Clear/Quit and optional `personality/owo.c` presentation mode.
+Explicit `session` connects this same terminal to a dedicated OpenCode chat session,
+with retained server history and final answers (not streaming). Automated fake
+CLI/pipe owners prove local wiring, not live Go entitlement or permission enforcement.
 
 ## Inspiration and name
 
@@ -73,7 +79,43 @@ building, and set `FUNC_PATH` or `--func` to the Func launcher. These are explic
 source/tool dependencies, not a requirement to register Primeagen inside Hotcwap.
 Missing dependencies fail; nothing is fetched or installed implicitly.
 
-## Scope and Limitations
+### Use your existing OpenCode / Go configuration
+
+First configure OpenCode itself with `/connect` and select a model with `/models`.
+Go is a provider subscription, not a transferable ChatGPT/Codex token; its key
+remains in OpenCode's own connection. Primeagen does not load `.env` in this mode.
+Requires an installed, configured **OpenCode V2**, using its official `opencode api`
+command for local server discovery/authentication (no SDK download or token copying).
+
+```sh
+sh cli/build.sh
+./primeagen session --engine opencode --owo
+# Selected Go model (also used for explicitly authorized answer smoke tests):
+./primeagen session --engine opencode --model opencode-go/deepseek-v4.1-flash --owo
+# Optional: select an exact provider/model ID from your OpenCode model list:
+./primeagen session --engine opencode --model PROVIDER/MODEL --owo
+```
+
+Enter sends a turn and may consume your subscription/quota. A new dedicated session
+is created only on the first Enter; never attach to the current coding session.
+Every session requests deny-all tool permissions and checks the echoed rules before
+each prompt. No permission approval calls are made; this is **chat-only**, not an
+editing agent. Trusted server/configuration/plugins are required: echoed rules
+and fake tests do not prove live server policy enforcement or sandboxing.
+OwO instructions come from the same canonical C function, not a copied Python prompt.
+Input remains available while a turn runs; Enter while busy preserves it. Final
+answers arrive after completion; Clear/Ctrl-L changes the display only, not history.
+Ctrl-Q closes the local worker and attempts remote interruption; interruption is
+best effort, so remote work may outlive exit. Remote history remains on OpenCode.
+Failures poison the bridge: exit/relaunch rather than attribute a late reply to a
+new prompt. Per-turn bounds are 120 seconds, 16 KiB request framing, 64 KiB response
+framing and 100 newest remote messages. Exhaustion fails explicitly, never silently
+truncates. Broader provider/subscription coverage, appearance, full launcher PTY lifecycle and
+macOS 14 runtime evidence remain gaps. **Codex App Server is not implemented yet.**
+
+The user-authorized native-Haven/host answer smoke passed on
+`opencode-go/deepseek-v4.1-flash` and included canonical OwO guidance. This narrow
+arithmetic result is not general model competence, visual approval or remote-policy proof.
 
 ### Try the C23 terminal interface
 
@@ -100,9 +142,12 @@ to message content; vendor system-role priority and live model compliance are
 not proven. The offline TUI also identifies the selected mode in greeting/status,
 but does not contact a model.
 
+## Scope and Limitations
+
 - First model protocol is strict JSON **text**, not native structured tool calls;
   providers/models that do not follow it reject. No streaming, retries, native
-  MCP, persistent sessions, editing tools, multi-agent routing or GUI yet.
+  MCP, editing tools, multi-agent routing or GUI yet. Only optional OpenCode mode
+  retains remote sessions; our prototype `chat` has no durable session storage.
 - Local means an OpenAI-compatible loopback server, not an embedded model or
   native Ollama protocol. Hosted transport verifies HTTPS and refuses redirects.
 - The Python host transport is an explicit standalone consumer adapter. API Haven
