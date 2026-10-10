@@ -41,6 +41,7 @@ import sys
 from urllib.parse import urlsplit
 
 from process import run
+from json_input import loads
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BASES = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com", "local": "http://127.0.0.1:11434/v1"}
@@ -94,14 +95,23 @@ class Provider:
         url, body = self.render(transcript)
         payload = json.dumps({"family": self.family, "url": url, "body": body, "timeout": self.timeout}).encode()
         data = run([sys.executable, str(ROOT / "src/transport.py")], data=payload, timeout=self.timeout)
-        response = json.loads(data)
+        response = loads(data)
+        if not isinstance(response, dict):
+            raise ValueError("provider response must be an object")
         if self.family == "anthropic":
-            parts = response["content"]
-            if not isinstance(parts, list) or not parts or any(p.get("type") != "text" for p in parts):
+            parts = response.get("content")
+            if (not isinstance(parts, list) or not parts or any(not isinstance(p, dict)
+                    or p.get("type") != "text" or not isinstance(p.get("text"), str) for p in parts)):
                 raise ValueError("unsupported Anthropic response")
             text = "".join(part["text"] for part in parts)
         else:
-            text = response["choices"][0]["message"]["content"]
+            choices = response.get("choices")
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                raise ValueError("unsupported OpenAI-compatible response")
+            message = choices[0].get("message")
+            if not isinstance(message, dict):
+                raise ValueError("unsupported OpenAI-compatible message")
+            text = message.get("content")
         if not isinstance(text, str) or not text:
             raise ValueError("provider returned no text")
         return text
