@@ -1,4 +1,5 @@
 #include "tui/tui.h"
+#include "tui/markdown.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 #include "annotation/intention.h"
@@ -23,6 +24,8 @@
  * buffers. Transcript bytes are made terminal-safe at admission, so rendering
  * never executes escape sequences. Wrapping is derived from current terminal-cell
  * width, not a guessed fixed screen size. Following the tail and reading older
+ * output use visible bytes after optional cold Markdown removal; parallel
+ * host-owned cell flags carry formatting and speaker styles, never ANSI strings.
  * output are distinct states: appends preserve a scrolled viewport's old content.
  *
  * This preview owns ordinary display buffers, not an ecosystem allocator or
@@ -56,6 +59,7 @@
  * ----------------------------------------------------------------------------
  *   TuiEntry {
  *     char *text;              // owned terminal-safe ASCII/newline bytes
+ *     uint8_t *styles;         // owned per-visible-byte flags plus terminator
  *     size_t length;           // byte extent excluding terminator
  *   }
  *
@@ -69,6 +73,9 @@
  *
  * Core operations:
  *   - bool Tui_add(Tui *self, const char *text, size_t length)
+ *   - bool Tui_addStyled(Tui *self, const char *text, size_t length,
+ *                        uint8_t baseStyle, bool markdown)
+ *     Sanitize then format cold; failed admission publishes no entry.
  *   - bool Tui_entriesReserve(Tui *self, size_t capacity)
  *   - bool Tui_inputReserve(Tui *self, size_t capacity)
  *   - bool Tui_inputAddChar(Tui *self, int character)
@@ -94,6 +101,9 @@
  * Projections:
  *   - bool Tui_copyRow(const Tui *self, size_t rowIndex,
  *                     char *dest, size_t cap, bool *outTruncated)
+ *   - bool Tui_copyStyledRow(const Tui *self, size_t rowIndex, char *dest,
+ *                           uint8_t *styles, size_t cap, bool *outTruncated)
+ *     Visible wrapping with parallel flags; optional styles output.
  *   - bool Tui_toString(const Tui *self, char *dest, size_t cap,
  *                       bool *outTruncated)
  *   - bool Tui_toStringStruct(const Tui *self, char *dest, size_t cap,
@@ -210,6 +220,12 @@ bool Tui_inputReserve(Tui *self, size_t capacity) {
 
 /* Sanitize before publishing: even ESC, NUL and UTF-8 bytes are inert display. */
 bool Tui_add(Tui *self, const char *text, size_t length) {
+    return Tui_addStyled(self, text, length, 0, false);
+}
+
+bool Tui_addStyled(Tui *self, const char *text, size_t length, uint8_t baseStyle, bool markdown) {
+    if (baseStyle & ~TEXT_STYLE_MASK)
+        return reject("invalid display style");
     if (!Tui_isReady(self) || text == nullptr || length > (size_t) PTRDIFF_MAX / 4 - 1 || (*self).count == SIZE_MAX)
         return reject("invalid transcript span");
     size_t previousRows = Tui_getVisualRowCount(self);
@@ -230,12 +246,38 @@ bool Tui_add(Tui *self, const char *text, size_t length) {
         }
     }
     copy[used] = '\0';
+    uint8_t *styles = malloc(used + 1);
+    char *rendered = markdown ? malloc(used + 1) : nullptr;
+    if (styles == nullptr || (markdown && rendered == nullptr)) {
+        free(styles);
+        free(rendered);
+        free(copy);
+        return reject("style allocation failed");
+    }
+    if (markdown) {
+        size_t visible = 0;
+        if (!Markdown_render(copy, used, rendered, styles, used + 1, &visible, nullptr)) {
+            free(styles);
+            free(rendered);
+            free(copy);
+            return false;
+        }
+        free(copy);
+        copy = rendered;
+        used = visible;
+        for (size_t i = 0; i < used; ++i)
+            styles[i] |= baseStyle;
+    } else
+        memset(styles, baseStyle, used);
+    styles[used] = 0;
     if (!Tui_entriesReserve(self, (*self).count + 1)) {
         free(copy);
+        free(styles);
         return false;
     }
     TuiEntry *entry = &(*self).entries[(*self).count];
     (*entry).text = copy;
+    (*entry).styles = styles;
     (*entry).length = used;
     ++(*self).count;
     if ((*self).scroll != 0) {
@@ -306,6 +348,7 @@ void Tui_clear(Tui *self) {
     for (size_t i = 0; i < (*self).count; ++i) {
         TuiEntry *entry = &(*self).entries[i];
         free((*entry).text);
+        free((*entry).styles);
         *entry = (TuiEntry) {0};
     }
     (*self).count = 0;
@@ -416,6 +459,10 @@ size_t Tui_getFirstVisibleRow(const Tui *self) {
 
 /* Copy one full visual row or flag the partial buffer; absence leaves empty text. */
 bool Tui_copyRow(const Tui *self, size_t rowIndex, char *dest, size_t cap, bool *outTruncated) {
+    return Tui_copyStyledRow(self, rowIndex, dest, nullptr, cap, outTruncated);
+}
+
+bool Tui_copyStyledRow(const Tui *self, size_t rowIndex, char *dest, uint8_t *styles, size_t cap, bool *outTruncated) {
     if (outTruncated != nullptr)
         *outTruncated = false;
     if (dest == nullptr || cap == 0) {
@@ -424,6 +471,8 @@ bool Tui_copyRow(const Tui *self, size_t rowIndex, char *dest, size_t cap, bool 
         return reject("missing row destination");
     }
     dest[0] = '\0';
+    if (styles != nullptr)
+        styles[0] = 0;
     size_t width = Tui_getViewportWidth(self);
     if (self == nullptr || width == 0)
         return reject("row unavailable");
@@ -441,6 +490,10 @@ bool Tui_copyRow(const Tui *self, size_t rowIndex, char *dest, size_t cap, bool 
                     size_t copied = count < cap - 1 ? count : cap - 1;
                     memcpy(dest, (*entry).text + start + offset, copied);
                     dest[copied] = '\0';
+                    if (styles != nullptr) {
+                        memcpy(styles, (*entry).styles + start + offset, copied);
+                        styles[copied] = 0;
+                    }
                     if (copied != count) {
                         if (outTruncated != nullptr)
                             *outTruncated = true;

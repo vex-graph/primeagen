@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "tui/text_style.h"
 
 /* Named cold allocation defaults, not permanent input/history ceilings. */
 #define TUI_INPUT_CAPACITY_DEFAULT 32u
@@ -14,6 +15,7 @@
 /* SLOT RECORD: owned display bytes; no behavior or independently escaping row. */
 typedef struct TuiEntry {
     char *text;
+    uint8_t *styles;
     size_t length;
 } TuiEntry;
 
@@ -48,6 +50,9 @@ Tui Tui_2(size_t inputCapacity, size_t entryCapacity);
  * non-ASCII bytes render as escapes. Growth is cold and fallible. No row or input
  * pointer escapes a mutation except the explicitly borrowed getInput view. */
 bool Tui_add(Tui *self, const char *text, size_t length);
+/* Sanitize first, then optional Markdown; baseStyle contains host flags only.
+ * Admission preserves existing entries on allocation/parser failure. */
+bool Tui_addStyled(Tui *self, const char *text, size_t length, uint8_t baseStyle, bool markdown);
 bool Tui_entriesReserve(Tui *self, size_t capacity);
 bool Tui_inputReserve(Tui *self, size_t capacity);
 bool Tui_setInput(Tui *self, const char *text, size_t length);
@@ -76,6 +81,8 @@ size_t Tui_getViewportWidth(const Tui *self);
 size_t Tui_getVisualRowCount(const Tui *self);
 size_t Tui_getFirstVisibleRow(const Tui *self);
 bool Tui_copyRow(const Tui *self, size_t rowIndex, char *dest, size_t cap, bool *outTruncated);
+/* styles parallels copied bytes and uses the same cap; nullptr omits flags. */
+bool Tui_copyStyledRow(const Tui *self, size_t rowIndex, char *dest, uint8_t *styles, size_t cap, bool *outTruncated);
 
 bool Tui_toString(const Tui *self, char *dest, size_t cap, bool *outTruncated);
 bool Tui_toStringStruct(const Tui *self, char *dest, size_t cap, bool *outTruncated);
