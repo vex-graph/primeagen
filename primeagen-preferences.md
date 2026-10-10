@@ -25,6 +25,13 @@ existing native send API has no TLS. This scoped consumer-adapter exception unde
 the Conflict Triage Law does not move ecosystem transport ownership or permit
 reverse dependencies. No GUI/window/memory subsystem is implemented here.
 
+The requested native direction starts with a C23 ncurses frontend in `cli/` over
+the independently owned `tui/` model and `tui/event/` normalized terminal-cell
+events. This offline preview does not replace the Python provider/agent loop yet.
+Personality `personality/owo.c` selects presentation prose only, never consent or
+tool policy. Vexspoke's actual JSON string writer is consumed, not duplicated.
+Display buffers use cold growable C storage; no realtime/backend-trust claim.
+
 ### Explicit Tool Consent Law
 
 Model output is untrusted data, never authorization. Every read, Func build and
