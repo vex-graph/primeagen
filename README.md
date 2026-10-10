@@ -18,14 +18,19 @@ provider behavior, macOS 14 runtime, Windows and GUI integration are unproven.
 The existing R4 message value is reused, not a claim that Harness's planned agent
 objects or server are implemented.
 
+The new **C23 ncurses TUI** lives in `cli/` and `tui/`, with normalized mouse
+events in `tui/event/`. It is an offline interface preview, not yet the native
+agent replacement: local text entry, wrapped transcript scrolling, fixed input,
+clickable Clear/Quit and optional `personality/owo.c` presentation mode.
+
 ## Inspiration and name
 
 Inspired by **PAIcom's personal computer-assistant idea**, and by the CLI-first
 workflow of tools such as Pi. This is an independent project, not a fork or an
 endorsement. It intentionally explores an AI-powered assistant.
 
-**Not affiliated with, endorsed by, or associated with ThePrimeagen.** The name
-does not imply any connection to him or his projects.
+**Not affiliated with, endorsed by, or associated with ThePrimeagen, or Prime Intellect's Prime Agent.** The name
+does not imply any connection to them or their projects/associations.
 
 ## Build and use
 
@@ -54,6 +59,25 @@ source/tool dependencies, not a requirement to register Primeagen inside Hotcwap
 Missing dependencies fail; nothing is fetched or installed implicitly.
 
 ## Scope and Limitations
+
+### Try the C23 terminal interface
+
+Requires the host ncurses headers/library (no automatic installation):
+
+```sh
+sh cli/build.sh
+./primeagen tui
+./primeagen tui --owo
+```
+
+Wheel/PgUp/PgDn scroll the transcript; End returns to the tail. Click the input
+line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter appends
+locally and makes no model/tool call. Mouse reporting depends on the terminal.
+Input editing is currently printable ASCII; other transcript bytes are escaped.
+Automated headless ncurses cell assertions are not appearance or real-terminal
+mouse acceptance. Normal exit and SIGINT/SIGTERM restore the terminal; crashes
+and SIGKILL cannot promise restoration. Windows/Linux builds remain unproved.
+The `--owo` switch selects playful greeting/status only, never permissions.
 
 - First model protocol is strict JSON **text**, not native structured tool calls;
   providers/models that do not follow it reject. No streaming, retries, native
