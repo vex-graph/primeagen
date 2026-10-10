@@ -1,4 +1,4 @@
-# Primeagen
+# Primeagen >w<
 
 ## Current State
 
@@ -32,10 +32,10 @@ CLI/pipe owners prove local wiring, not live Go entitlement or permission enforc
 ## Inspiration and name
 
 Inspired by **PAIcom's personal computer-assistant idea**, and by the CLI-first
-workflow of tools such as Pi. This is an independent project, not a fork or an
+workflow of tools such as Pi, `agy` CLI (from Google's Antigravity), and OpenCode. This is an independent project, not a fork or an
 endorsement. It intentionally explores an AI-powered assistant.
 
-**Not affiliated with, endorsed by, or associated with ThePrimeagen, or Prime Intellect's Prime Agent.** The name
+**Not affiliated with, endorsed by, or associated with PAIcom and its developer, ThePrimeagen, or Prime Intellect's Prime Agent.** The name
 does not imply any connection to them or their projects/associations.
 
 ## Build and use
