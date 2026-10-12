@@ -23,7 +23,12 @@ FUNCTION REGISTRY:
   decide(session, target, decision) : reply once/always/reject to one request.
   begin(session, prompt, instructions) : admit one prompt under a turn deadline.
   collect(item, answers, tools) : project one assistant message, bounded.
-  advance(session, turn) : one bounded progress step; reports ask/done/running.
+  clip(value, cap) : one bounded printable fragment from remote text.
+  pathOf(arguments) : bounded target path from a tool call's arguments.
+  diffLines(old, new, cap) : bounded common-prefix/suffix line diff.
+  summarize(name, arguments) : one tool call as bounded transcript lines.
+  newNotes(turn, tools) : report each tool call once, as soon as args are known.
+  advance(session, turn) : one bounded step; returns (notes, ask, done).
   interrupt(session) : best-effort remote cancellation, never local proof.
   emit(payload) : one bounded newline JSON frame to the native terminal.
   worker(model) : UTF-8 newline JSON frame loop; final answers, approval requests
@@ -75,6 +80,9 @@ WIRE_CAP = 65536
 PAGE_LIMIT = 100  # Reject a single turn exceeding this bounded newest page.
 REQUEST_LIMIT = 8  # Reject an implausible pending-approval page.
 LABEL_CAP = 200  # Bounded native display text; the C bridge rejects overflow.
+NOTE_CAP = 400   # Bounded streamed activity line; below the bridge's 511-byte cap.
+LINE_CAP = 160   # Bounded single argument fragment inside one note line.
+DIFF_LINE_CAP = 12  # Bounded added/removed lines shown per edit.
 PERMISSION_POLL = 1.0  # Pending-approval poll cadence, not a turn budget.
 DECISIONS = ("once", "always", "reject")
 # Effective effects the default policy must produce after evaluation. Inspection
@@ -234,11 +242,11 @@ def begin(session, prompt, instructions):
     message_id = "msg_" + uuid.uuid4().hex
     api("post", "/api/session/" + session + "/prompt", {"id": message_id, "text": instructions + prompt})
     return {"messageId": message_id, "deadline": time.monotonic() + TURN_TIMEOUT,
-            "awaiting": None, "awaitingSince": 0.0, "nextCheck": 0.0}
+            "awaiting": None, "awaitingSince": 0.0, "nextCheck": 0.0, "seen": set()}
 
 
 def collect(item, answers, tools):
-    """Project one assistant message; tool activity is reported, never executed here."""
+    """Project one assistant message; tool calls are reported, never executed here."""
     if not isinstance(item, dict) or item.get("type") != "assistant":
         return
     if item.get("error") or item.get("finish") in ("error", "length", "content-filter"):
@@ -252,9 +260,13 @@ def collect(item, answers, tools):
         kind = part.get("type")
         if kind == "tool":
             name = part.get("name")
+            identity = part.get("id")
             if not isinstance(name, str) or not name or len(name) > 64:
                 raise ValueError("invalid tool identity")
-            tools.append(name)
+            if not isinstance(identity, str) or not identity or len(identity) > 128:
+                raise ValueError("invalid tool identity")
+            state = part.get("state")
+            tools.append({"id": identity, "name": name, "state": state if isinstance(state, dict) else {}})
         elif kind == "text":
             text = part.get("text")
             if not isinstance(text, str):
@@ -262,10 +274,92 @@ def collect(item, answers, tools):
             answers.append(text)
 
 
+def clip(value, cap=LINE_CAP):
+    """One bounded printable fragment; remote content never reaches the screen raw."""
+    text = "" if value is None else str(value)
+    text = "".join(character if 32 <= ord(character) < 127 else " " for character in text).strip()
+    return text[:cap] + ("..." if len(text) > cap else "")
+
+
+def pathOf(arguments):
+    for key in ("filePath", "path", "file", "filename"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value:
+            return clip(value)
+    return ""
+
+
+def diffLines(old, new, cap=DIFF_LINE_CAP):
+    """Common-prefix/suffix line diff; a bounded list, never a colored painting."""
+    oldLines, newLines = old.splitlines(), new.splitlines()
+    start = 0
+    while start < len(oldLines) and start < len(newLines) and oldLines[start] == newLines[start]:
+        start += 1
+    end = 0
+    while (end < len(oldLines) - start and end < len(newLines) - start
+           and oldLines[len(oldLines) - 1 - end] == newLines[len(newLines) - 1 - end]):
+        end += 1
+    lines = [f"  - {clip(line)}" for line in oldLines[start:len(oldLines) - end][:cap]]
+    lines += [f"  + {clip(line)}" for line in newLines[start:len(newLines) - end][:cap]]
+    return lines or ["  (no line change)"]
+
+
+def summarize(name, arguments):
+    """One tool call as bounded transcript lines. Display text only, never a
+    command, and never a re-execution: OpenCode already ran it."""
+    tool = name.strip().lower() or "tool"
+    if tool in ("bash", "shell"):
+        command = arguments.get("command")
+        return [f"shell: {clip(command)}"] if isinstance(command, str) and command.strip() else ["shell:"]
+    if tool == "websearch":
+        query = arguments.get("query")
+        return [f'websearch: "{clip(query)}"'] if isinstance(query, str) else ["websearch:"]
+    if tool in ("webfetch", "fetch"):
+        url = arguments.get("url")
+        return [f"webfetch: {clip(url)}"] if isinstance(url, str) else ["webfetch:"]
+    if tool in ("glob", "grep"):
+        pattern = arguments.get("pattern")
+        return [f'{tool}: "{clip(pattern)}"'] if isinstance(pattern, str) else [f"{tool}:"]
+    path = pathOf(arguments)
+    if tool in ("edit", "patch", "multiedit"):
+        lines = [f"edit: {path or 'file'}"]
+        old, new = arguments.get("oldString"), arguments.get("newString")
+        if isinstance(old, str) and isinstance(new, str):
+            lines.extend(diffLines(old, new))
+        return lines
+    if tool == "read":
+        offset, limit = arguments.get("offset"), arguments.get("limit")
+        where = ""
+        if isinstance(offset, int) and offset > 0:
+            if isinstance(limit, int) and limit > 0:
+                where = f" (lines {offset}-{offset + limit - 1})"
+            else:
+                where = f" (from line {offset})"
+        return [f"read: {path or 'file'}{where}"]
+    if path:
+        return [f"{tool}: {path}"]
+    return [f"{tool}:"]
+
+
+def newNotes(turn, tools):
+    """Report each tool call once, as soon as its arguments are known."""
+    notes = []
+    for tool in tools:
+        if tool["id"] in turn["seen"]:
+            continue
+        state = tool["state"]
+        arguments = state.get("input")
+        if state.get("status") not in ("running", "completed", "error") or not isinstance(arguments, dict):
+            continue
+        turn["seen"].add(tool["id"])
+        notes.extend(summarize(tool["name"], arguments))
+    return [line[:NOTE_CAP] for line in notes]
+
+
 def advance(session, turn):
-    """One bounded progress step: ask, running or done. Never blocks on a human."""
+    """One bounded progress step -> (notes, ask, done). Never blocks on a human."""
     if turn["awaiting"] is not None:
-        return "waiting", None
+        return [], None, None
     if time.monotonic() >= turn["deadline"]:
         raise ValueError("remote turn deadline exceeded")
     result = api("get", "/api/session/" + session + "/message?order=desc&limit=" + str(PAGE_LIMIT),
@@ -282,8 +376,8 @@ def advance(session, turn):
             pending = request(session)
             if pending is not None:
                 turn["awaiting"] = pending
-                return "ask", pending
-        return "running", None
+                return [], pending, None
+        return [], None, None
     answers, tools, completed = [], [], False
     for item in list(reversed(messages[:boundary])):
         collect(item, answers, tools)
@@ -291,17 +385,15 @@ def advance(session, turn):
             if item.get("outcome") != "succeeded":
                 raise ValueError("remote session did not succeed")
             completed = True
+    notes = newNotes(turn, tools)
     if not completed:
-        return "running", None
+        return notes, None, None
     text = "\n".join(answers)
-    if tools:
-        note = "used " + ", ".join(sorted(set(tools)))
-        text = text + ("\n" if text else "") + note
     if not text:
         text = "(no text returned)"  # a completed turn may be tool-only or silent
     if len(json.dumps({"ok": True, "text": text}, ensure_ascii=False).encode("utf-8")) >= WIRE_CAP - 1:
         raise ValueError("oversized session answer")
-    return "done", text
+    return notes, None, text
 
 
 def interrupt(session):
@@ -360,12 +452,14 @@ def worker(model):
         if turn is None:
             continue
         try:
-            state, detail = advance(session, turn)
-            if state == "ask":
+            notes, ask, done = advance(session, turn)
+            for line in notes:
+                emit({"note": line})
+            if ask is not None:
                 turn["awaitingSince"] = time.monotonic()
-                emit({"ask": {"id": detail["id"], "label": label(detail)}})
-            elif state == "done":
-                emit({"ok": True, "text": detail})
+                emit({"ask": {"id": ask["id"], "label": label(ask)}})
+            if done is not None:
+                emit({"ok": True, "text": done})
                 turn = None
         except (ValueError, OSError):
             interrupt(session)
