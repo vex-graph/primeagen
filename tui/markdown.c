@@ -1,4 +1,5 @@
 #include "tui/markdown.h"
+#include "tui/utf8.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 #include "exception/throw.h"
@@ -6,7 +7,7 @@
 
 ;;DEFINITION
 /* A cold terminal adapter converts a deliberately small Markdown subset to
- * visible ASCII and parallel display flags. It never emits ANSI or invokes a
+ * visible UTF-8 and parallel display flags. It never emits ANSI or invokes a
  * terminal API. The owning Tui sanitizes untrusted model bytes before this seam;
  * ncurses consumes host-selected flags afterward. Flat spans and an explicit
  * lookahead budget prevent recursive or quadratic hostile parsing. This is not
@@ -27,13 +28,13 @@
  *   size_t line(source, start, end, base, dest, styles, budget)
  *     Emit one logical line; code spans take precedence; unmatched markup literal.
  * CONTRACT: cold, synchronous, serialized/disjoint spans; no allocation, IO,
- * callbacks or recursion. Source is ASCII/newline, not raw terminal controls.
+ * callbacks or recursion. Source is safe UTF-8/newline, not raw terminal controls.
  * cap >= length+1; truncation false on success, true on insufficient destination.
  * Invalid input preserves destination/styles; output length resets to zero.
  * Four-times-length lookahead budget is a safety bound, not a text-size ceiling.
  * Exhausted lookahead preserves remaining markup literally, never loses text.
  * All flags are host-owned constants from text_style.h. No arbitrary pointers,
- * UTF-8 cell layout, nested spans, links, tables or syntax highlighting promised.
+ * grapheme shaping, nested spans, links, tables or syntax highlighting promised.
  * ============================================================================ */
 #define MARKDOWN_LOOKAHEAD_FACTOR 4u /* Bounds total scans of hostile delimiters. */
 #define MARKDOWN_HEADING_MAX 6u /* Markdown's fixed ATX heading levels. */
@@ -113,11 +114,15 @@ bool Markdown_render(const char *source, size_t length, char *dest,
         THROW("markdown: output capacity must cover input plus terminator");
         return false;
     }
-    for (size_t i = 0; i < length; ++i)
-        if (source[i] != '\n' && ((unsigned char) source[i] < ' ' || (unsigned char) source[i] > '~')) {
-            THROW("markdown: input must be terminal-safe ASCII or newline");
+    for (size_t i = 0; i < length;) {
+        uint32_t scalar;
+        size_t bytes = TuiUtf8_decode(source + i, length - i, &scalar);
+        if (bytes == 0 || !TuiUtf8_safe(scalar)) {
+            THROW("markdown: input must be terminal-safe UTF-8 or newline");
             return false;
         }
+        i += bytes;
+    }
     size_t budget = length * MARKDOWN_LOOKAHEAD_FACTOR;
     size_t used = 0;
     size_t at = 0;
