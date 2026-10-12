@@ -83,6 +83,17 @@ are taken from canonical C Owo_instructions. Native TUI polls borrowed nonblocki
 pipes, not sockets or workers. Derived SessionBridge wire buffers/identities change
 only through admission/decide/poll/free (Conflict Triage Law managed accessor
 exception).
+A turn is presented as a stream, not one lump: the session host emits a bounded
+`{note:...}` line as each tool call reports its arguments, and the bridge surfaces
+exactly one frame per poll through `SessionBridge_takeNote`, so a burst of notes
+stays ordered and none is dropped. The terminal appends them under one per-turn
+speaker label, keeps a live trailing `working...` placeholder that is popped before
+any real output, and ends the turn with `answer:`. Notes are bounded display text
+derived from remote arguments (a `-`/`+` diff list for edits), never commands and
+never a local re-execution; coloring stays the language layer's job. Transcript
+scrolling is wheel-up/down (the fifth-button bit is registered explicitly because
+this SDK's ncurses is MOUSE_VERSION 1 and does not declare `BUTTON5_PRESSED`),
+Up/Down one row, PgUp/PgDn one page and End to tail.
 Cold projections redact transcript buffers and summarize the borrowed Haven driver,
 whose current class has no bounded projection; never dump prompt/response values.
 Remote history remains with OpenCode; local cancellation attempts remote interrupt

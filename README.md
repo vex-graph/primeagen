@@ -148,18 +148,50 @@ configured deny always wins. Approvals cannot be granted by the model, and a
 pending question never expires the model deadline. Trusted server/configuration/
 plugins are required: echoed rules and fake tests do not prove live server policy
 enforcement or sandboxing. Only one bounded request is shown at a time.
+
+**The turn is a stream, not one lump.** Sending shows your prompt, then a live
+placeholder:
+
+```text
+You:
+refactor the parser and show me the diff
+
+OpenCode:
+read: src/parser.c (lines 40-92)
+edit: src/parser.c
+  - old line removed
+  + new line added
+working...
+
+answer:
+done — extracted the helper and updated the call site
+
+```
+
+The speaker label appears once per turn; each tool line is appended the moment
+OpenCode reports its arguments, and the trailing `working...` line is a live
+placeholder that moves down as output arrives and disappears when the turn ends.
+The final answer is labelled `answer:`. Notes are bounded display text — never
+commands, never re-executed here — and edit diffs are a plain `-`/`+` list (no
+color yet; the language layer owns syntax coloring). Scroll the transcript with
+the wheel, **Up/Down arrows** (one row) or **PgUp/PgDn** (one page); `End` jumps
+to the tail. On this macOS ncurses (MOUSE_VERSION 1) wheel-down is not declared
+as `BUTTON5_PRESSED`, so Primeagen registers the documented fifth-button bit
+itself — arrows always work regardless.
+
 OwO instructions come from the same canonical C function, not a copied Python prompt.
 Input remains available while a turn runs; Enter while busy preserves it. Final
-answers arrive after completion; tool activity is reported as a `used <tool>` line
-rather than executed locally. Clear/Ctrl-L changes the display only, not history.
-Ctrl-Q closes the local worker and attempts remote interruption; interruption is
-best effort, so remote work may outlive exit. Remote history remains on OpenCode.
-Failures poison the bridge: exit/relaunch rather than attribute a late reply to a
-new prompt. Per-turn bounds are 120 seconds of model time (excluding your decision),
-16 KiB request framing, 64 KiB response framing and 100 newest remote messages.
-Exhaustion fails explicitly, never silently
-truncates. Broader provider/subscription coverage, appearance, full launcher PTY lifecycle and
-macOS 14 runtime evidence remain gaps. **Codex App Server is not implemented yet.**
+answers arrive after completion; tool activity is reported as `read:`/`edit:`/
+`shell:` lines rather than executed locally. Clear/Ctrl-L changes the display
+only, not history. Ctrl-Q closes the local worker and attempts remote
+interruption; interruption is best effort, so remote work may outlive exit.
+Remote history remains on OpenCode. Failures poison the bridge: exit/relaunch
+rather than attribute a late reply to a new prompt. Per-turn bounds are 120
+seconds of model time (excluding your decision), 16 KiB request framing, 64 KiB
+response framing and 100 newest remote messages. Exhaustion fails explicitly,
+never silently truncates. Broader provider/subscription coverage, appearance,
+full launcher PTY lifecycle and macOS 14 runtime evidence remain gaps.
+**Codex App Server is not implemented yet.**
 
 The user-authorized native-Haven/host answer smoke passed on
 `opencode-go/deepseek-v4.1-flash` and included canonical OwO guidance. This narrow
