@@ -45,11 +45,16 @@
  * ----------------------------------------------------------------------------
  * Private helpers:
  *   static void stop(int signalNumber) : flag shutdown; no terminal API/logging.
- *   static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, uint8_t *styles, size_t cap)
+ *   static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, bool failed, char *row, uint8_t *styles, size_t cap)
  *     Draw per-cell styled wrapped viewport, fixed input/status and cursor.
  *     No model-supplied terminal escape sequences; unsupported italic uses underline.
  *   static int command(Tui *, bool) : local slash dispatch; connect/quit actions.
  *   static const char *approvalReply(int key) : once/always/reject key mapping.
+ *   static bool mouseReporting(bool enabled) : own X10/SGR capture enable/restore.
+ *   static bool readMouse(int key, int *x, int *y, TuiMouseKind *kind)
+ *     Bounded protocol decode; coordinate outputs unchanged on malformed input.
+ *   static void drawApproval(int rows, int left, int columns)
+ *     Fixed decision bar, visible even while scrolling the proposed resources.
  *   static int connectHost(const char *, bool) : exec existing adapter on Go Flash.
  * Entry:
  *   int main(int argc, char **argv)
@@ -64,12 +69,11 @@
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
  *   Small terminals show resize guidance; quit remains available by Ctrl-Q.
- *   Mouse support depends on terminal; keyboard provides PgUp/PgDn, Up/Down,
+ *   Mouse support depends on terminal; keyboard provides Up/Down,
  *   End, Ctrl-L clear, Tab focus, Enter send, Backspace, Ctrl-Q quit. Resize
  *   recalculates all bounds. Input is printable ASCII; transcript controls are
- *   escaped by Tui. Wheel-up is BUTTON4; the fifth-button bit is registered
- *   explicitly because this SDK's ncurses is MOUSE_VERSION 1 and does not
- *   declare BUTTON5_PRESSED, which otherwise leaves wheel-down unreachable.
+ *   escaped by Tui. X10/SGR mouse bytes are decoded before the old ncurses mouse
+ *   ABI can discard button 5; wheel 64/65 are distinct, never modifier aliases.
  *   Default is disconnected. /connect explicitly starts the existing Python host
  *   using OpenCode login; no pasted keys or tool execution happens here.
  *   The connected session runs under the host's default policy: inspection is
@@ -93,18 +97,11 @@
 #define TUI_CTRL_Q 17
 #define TUI_CTRL_L 12
 #define TUI_CTRL_T 20
-/* This SDK's ncurses is NCURSES_MOUSE_VERSION 1. Its fifth 6-bit slot holds the
- * CTRL/SHIFT/ALT modifier bits, so a real button-5 press cannot be declared the
- * way BUTTON1..BUTTON4 are; there is no BUTTON5_PRESSED to register. ncurses can
- * still encode a wheel-down as a press in that slot, so we probe it directly and
- * only accept it when no actual button is involved, which keeps a real
- * shift-click (BUTTON1 plus the modifier) from scrolling. */
-#if NCURSES_MOUSE_VERSION > 1
-#define TUI_WHEEL_DOWN BUTTON5_PRESSED
-#else
-#define TUI_WHEEL_DOWN ((mmask_t) (NCURSES_BUTTON_PRESSED << 24))
-#endif
-#define TUI_BUTTON_BITS (BUTTON1_PRESSED | BUTTON1_RELEASED | BUTTON1_CLICKED | BUTTON4_PRESSED)
+/* Distinct ncurses user-key codes; not bit masks in the v1 MEVENT ABI. */
+#define TUI_MOUSE_SGR (KEY_MAX + 1)
+#define TUI_MOUSE_X10 (KEY_MAX + 2)
+#define TUI_MOUSE_FIELD_MAX 65535 /* Protocol safety bound, not viewport size. */
+#define TUI_MOUSE_READ_MS 20 /* At most 18 suffix bytes, each bounded. */
 #define TUI_COMMAND_MESSAGE 1
 #define TUI_COMMAND_CONNECT 2
 #define TUI_COMMAND_QUIT 3
@@ -112,6 +109,64 @@
 #define TUI_CONNECT_MODEL "opencode-go/deepseek-v4.1-flash"
 enum { TUI_PAIR_HEADER = 1, TUI_PAIR_ACCENT = 2, TUI_PAIR_STATUS = 3, TUI_PAIR_INPUT = 4, TUI_PAIR_CODE = 5, TUI_PAIR_ERROR = 6 };
 static volatile sig_atomic_t stopped;
+
+/* Own capture explicitly: ncurses v1 cannot represent both wheel directions.
+ * Ctrl-T and normal shutdown disable both modes, restoring terminal selection. */
+static bool mouseReporting(bool enabled) {
+    return fputs(enabled ? "\033[?1000h\033[?1006h" : "\033[?1000l\033[?1006l", stdout) >= 0 && fflush(stdout) == 0;
+}
+
+/* Prefixes are recognized by ncurses' key trie; only their bounded suffix is
+ * read here. SGR supports large coordinates; legacy X10 is a fallback. No raw
+ * mouse byte is entered into the user's draft. Releases/motion are ignored. */
+static bool readMouse(int key, int *outX, int *outY, TuiMouseKind *outKind) {
+    unsigned fields[3] = {0};
+    bool valid = true, pressed = true;
+    timeout(TUI_MOUSE_READ_MS);
+    if (key == TUI_MOUSE_X10) {
+        for (size_t i = 0; i < 3; ++i) {
+            int byte = getch();
+            if (byte < 32 || byte > 255) {
+                valid = false;
+                break;
+            }
+            fields[i] = (unsigned) byte - 32;
+        }
+    } else if (key == TUI_MOUSE_SGR) {
+        for (size_t i = 0; i < 3 && valid; ++i) {
+            int byte = getch();
+            unsigned digits = 0;
+            while (byte >= '0' && byte <= '9' && digits < 5) {
+                fields[i] = fields[i] * 10 + (unsigned) (byte - '0');
+                ++digits;
+                byte = getch();
+            }
+            if (digits == 0 || fields[i] > TUI_MOUSE_FIELD_MAX ||
+                (i < 2 ? byte != ';' : byte != 'M' && byte != 'm'))
+                valid = false;
+            if (i == 2)
+                pressed = byte == 'M';
+        }
+    } else
+        valid = false;
+    timeout(TUI_POLL_MS);
+    if (!valid || !pressed || fields[1] == 0 || fields[2] == 0)
+        return false;
+    unsigned button = fields[0] & ~(4u | 8u | 16u); // modifier flags only
+    TuiMouseKind kind;
+    if (button == 64)
+        kind = TUI_MOUSE_WHEEL_UP;
+    else if (button == 65)
+        kind = TUI_MOUSE_WHEEL_DOWN;
+    else if (button == 0)
+        kind = TUI_MOUSE_CLICK;
+    else
+        return false;
+    *outX = (int) fields[1] - 1;
+    *outY = (int) fields[2] - 1;
+    *outKind = kind;
+    return true;
+}
 static void stop(int signalNumber) {
     (void) signalNumber;
     stopped = 1;
@@ -131,6 +186,16 @@ static const char *approvalReply(int key) {
     if (key == 'r' || key == 'n')
         return "reject";
     return nullptr;
+}
+
+static void drawApproval(int rows, int left, int columns) {
+    if (rows < TUI_MIN_ROWS || columns < TUI_MIN_COLUMNS)
+        return;
+    mvhline(rows - 2, left, ' ', columns - 1);
+    attron(A_BOLD);
+    mvaddnstr(rows - 2, left, "Accept? [y] Yes  [a] Always yes  [n] No", columns - 1);
+    attroff(A_BOLD);
+    curs_set(0);
 }
 
 /* The OpenCode speaker label appears once per turn; the caller keeps the flag.
@@ -298,9 +363,9 @@ int main(int argc, char **argv) {
         ok = tcsetattr(STDIN_FILENO, TCSANOW, &mode) == 0;
     }
     timeout(TUI_POLL_MS);
-    mouseinterval(0);
-    mmask_t mask = ALL_MOUSE_EVENTS; // never let the mask hide an encoded wheel-down
-    mousemask(selectText ? 0 : mask, nullptr);
+    mousemask(0, nullptr); // do not feed wheel-down into ncurses' v1 mouse ABI
+    ok = ok && define_key("\033[<", TUI_MOUSE_SGR) != ERR &&
+         define_key("\033[M", TUI_MOUSE_X10) != ERR && mouseReporting(!selectText);
     char *row = nullptr;
     uint8_t *styles = nullptr;
     size_t capacity = 0;
@@ -345,10 +410,13 @@ int main(int argc, char **argv) {
                 workingShown = false;
             }
             char question[SESSION_APPROVAL_LABEL_CAP + 96];
-            snprintf(question, sizeof(question), "Approve %s?  [o]nce  [a]lways  [r]eject",
-                     SessionBridge_getApprovalLabel(&bridge));
+            snprintf(question, sizeof(question), "Do you accept %s?  [y] Yes  [a] Always yes  [n] No",
+                      SessionBridge_getApprovalLabel(&bridge));
             ok = openTurn(&state, &turnOpen) &&
-                 Tui_addStyled(&state, question, strlen(question), TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false);
+                  Tui_addStyled(&state, question, strlen(question), TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false);
+            panel = PRIMEAGEN_PANEL_PEOPLE;
+            selection = 0;
+            Tui_setScroll(&state, 0); // approval must be visible, not above the viewport
             Tui_setDirty(&state, true);
         }
         if (ok && !workingShown && (SessionBridge_isBusy(&bridge) || SessionBridge_isAwaiting(&bridge)))
@@ -413,6 +481,10 @@ int main(int argc, char **argv) {
                 }
             } else
                 ok = panelsView(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), sessionFailed, panel, selection, listWidth, row, styles, capacity);
+            if (ok && SessionBridge_isAwaiting(&bridge)) {
+                drawApproval(rows, chatLeft, chatColumns);
+                ok = refresh() != ERR;
+            }
             Tui_setDirty(&state, false);
         }
         if (!ok)
@@ -422,14 +494,12 @@ int main(int argc, char **argv) {
             stopped = 1;
         else if (key == TUI_CTRL_T) {
             selectText = !selectText;
-            mousemask(selectText ? 0 : mask, nullptr);
+            ok = mouseReporting(!selectText);
             Tui_setDirty(&state, true);
         }
-        else if (SessionBridge_isAwaiting(&bridge)) {
+        else if (SessionBridge_isAwaiting(&bridge) && approvalReply(key) != nullptr) {
             // One pending question at a time: only o/y, a and r/n answer it.
             const char *reply = approvalReply(key);
-            if (selection != 0 || reply == nullptr)
-                continue; // unrecognized key leaves the pending question untouched
             if (!SessionBridge_decide(&bridge, reply))
                 ok = false;
             else {
@@ -451,38 +521,29 @@ int main(int argc, char **argv) {
             }
             Tui_setDirty(&state, true);
         }
-        else if (key == KEY_MOUSE) {
-            MEVENT event;
-            if (getmouse(&event) != OK)
+        else if (key == TUI_MOUSE_SGR || key == TUI_MOUSE_X10) {
+            int x, y;
+            TuiMouseKind kind;
+            if (!readMouse(key, &x, &y, &kind))
                 continue;
             if (selectText)
                 continue; // terminal, not application, owns selection/copy
-            TuiMouseKind kind;
-            bool wheelDown = (event.bstate & TUI_WHEEL_DOWN) != 0 && (event.bstate & TUI_BUTTON_BITS) == 0;
-            if (event.bstate & BUTTON4_PRESSED)
-                kind = TUI_MOUSE_WHEEL_UP;
-            else if (wheelDown)
-                kind = TUI_MOUSE_WHEEL_DOWN;
-            else if (event.bstate & BUTTON1_PRESSED)
-                kind = TUI_MOUSE_CLICK;
-            else
-                continue;
-            if (kind == TUI_MOUSE_CLICK && Primeagen_panelsClick(event.x, event.y, rows, columns, listWidth, panel, selection, &panel, &selection)) {
+            if (kind == TUI_MOUSE_CLICK && Primeagen_panelsClick(x, y, rows, columns, listWidth, panel, selection, &panel, &selection)) {
                 focused = selection == 0;
                 Tui_setDirty(&state, true);
                 continue;
             }
-            if (!sessionMode && selection == 0 && kind == TUI_MOUSE_CLICK && event.y == rows - 3 && event.x >= chatLeft + 1 && event.x <= chatLeft + 10) {
+            if (!sessionMode && selection == 0 && kind == TUI_MOUSE_CLICK && y == rows - 3 && x >= chatLeft + 1 && x <= chatLeft + 10) {
                 connectRequested = true;
                 stopped = 1;
                 continue;
             }
-            if (event.x < chatLeft)
+            if (x < chatLeft)
                 continue; // the list/rail never scroll the chat viewport
             // Scrolling the chat is always available, whatever the list selection.
             if (selection != 0 && kind != TUI_MOUSE_CLICK && kind != TUI_MOUSE_WHEEL_UP && kind != TUI_MOUSE_WHEEL_DOWN)
                 continue;
-            TuiMouseAction action = TuiMouse_dispatch(&state, event.x - chatLeft, event.y, kind);
+            TuiMouseAction action = TuiMouse_dispatch(&state, x - chatLeft, y, kind);
             if (action == TUI_MOUSE_QUIT)
                 stopped = 1;
             else if (action == TUI_MOUSE_CLEAR && selection == 0) {
@@ -495,11 +556,7 @@ int main(int argc, char **argv) {
             else if (kind == TUI_MOUSE_CLICK)
                 focused = false;
             Tui_setDirty(&state, true);
-        } else if (key == KEY_PPAGE)
-            Tui_scrollBy(&state, (int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_NPAGE)
-            Tui_scrollBy(&state, -(int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_UP)
+        } else if (key == KEY_UP)
             Tui_scrollBy(&state, 1);
         else if (key == KEY_DOWN)
             Tui_scrollBy(&state, -1);
@@ -516,6 +573,8 @@ int main(int argc, char **argv) {
         }
         else if (key == KEY_RESIZE)
             Tui_setDirty(&state, true);
+        else if (SessionBridge_isAwaiting(&bridge))
+            continue; // scroll/navigation allowed, draft/submission stays frozen
         else if (focused && selection == 0 && (key == '\n' || key == KEY_ENTER)) {
             int action = localCommand(&state, sessionMode);
             if (action != 0) {
@@ -569,6 +628,7 @@ int main(int argc, char **argv) {
             ok = Tui_inputAddChar(&state, key);
     }
     SessionBridge_free(&bridge);
+    (void) mouseReporting(false);
     endwin();
     delscreen(screen);
     free(row);
