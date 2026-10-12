@@ -28,7 +28,9 @@ FUNCTION REGISTRY:
   diffLines(old, new, cap) : bounded common-prefix/suffix line diff.
   summarize(name, arguments) : one tool call as bounded transcript lines.
   newNotes(turn, tools) : report each tool call once, as soon as args are known.
-  advance(session, turn) : one bounded step; returns (notes, ask, done).
+  advance(session, turn) : one bounded step; returns (notes, ask, done). The
+      deadline is an idle window restarted by observed remote progress, so a long
+      multi-tool turn is bounded by silence, not by total wall time.
   interrupt(session) : best-effort remote cancellation, never local proof.
   emit(payload) : one bounded newline JSON frame to the native terminal.
   worker(model) : UTF-8 newline JSON frame loop; final answers, approval requests
@@ -52,11 +54,12 @@ CONTRACT:
   Session history stays on OpenCode server after exit; not ephemeral/private RAM.
   Successful remote admission can incur subscription use/charges. No token copying,
   automatic installs, project config changes, direct vendor API or Codex support.
-  The whole-turn deadline excludes human decision time; bounded response/page/prompt
-  safety caps, quiet generic failure. Remote interrupt is best effort; server work
-  may outlive local timeout. Poll cadence is idle IO scheduling, not test
-  synchronization or frame cadence. POSIX/macOS only; no native-agent, stream-delta
-  or sandbox claim.
+  The whole-turn deadline is an idle window that excludes human decision time and
+  restarts on remote progress; the message page keeps its own bounded read budget
+  separate from the frame caps. Quiet generic failure. Remote interrupt is best
+  effort; server work may outlive local timeout. Poll cadence is idle IO
+  scheduling, not test synchronization or frame cadence. POSIX/macOS only; no
+  native-agent, stream-delta or sandbox claim.
 ============================================================================
 """
 import argparse
@@ -75,9 +78,13 @@ from json_input import loads
 from process import run
 
 ROOT = Path(__file__).resolve().parent.parent
-TURN_TIMEOUT = 120.0
+TURN_TIMEOUT = 180.0  # Idle window: no observed remote progress for this long.
 WIRE_CAP = 65536
-PAGE_LIMIT = 100  # Reject a single turn exceeding this bounded newest page.
+# A tool-using turn's newest page carries tool arguments and content, so the
+# message read gets its own bounded budget rather than the frame cap. It stays
+# finite: the page is parsed as untrusted JSON, never streamed unbounded.
+MESSAGE_CAP = 8 * 1024 * 1024
+PAGE_LIMIT = 200  # Reject a single turn exceeding this bounded newest page.
 REQUEST_LIMIT = 8  # Reject an implausible pending-approval page.
 LABEL_CAP = 200  # Bounded native display text; the C bridge rejects overflow.
 NOTE_CAP = 400   # Bounded streamed activity line; below the bridge's 511-byte cap.
@@ -111,12 +118,12 @@ SESSION_PERMISSIONS = [
 ]
 
 
-def api(method, path, body=None, timeout=10.0, empty=False):
+def api(method, path, body=None, timeout=10.0, empty=False, cap=WIRE_CAP):
     """Use official CLI discovery/auth, never inspect its token store."""
     argv = ["opencode", "api", method, path]
     if body is not None:
         argv += ["--data", json.dumps(body, ensure_ascii=True, separators=(",", ":"))]
-    raw = run(argv, timeout=timeout, cap=WIRE_CAP)
+    raw = run(argv, timeout=timeout, cap=cap)
     if empty and not raw.strip():
         return {}
     result = loads(raw)
@@ -242,7 +249,8 @@ def begin(session, prompt, instructions):
     message_id = "msg_" + uuid.uuid4().hex
     api("post", "/api/session/" + session + "/prompt", {"id": message_id, "text": instructions + prompt})
     return {"messageId": message_id, "deadline": time.monotonic() + TURN_TIMEOUT,
-            "awaiting": None, "awaitingSince": 0.0, "nextCheck": 0.0, "seen": set()}
+            "awaiting": None, "awaitingSince": 0.0, "nextCheck": 0.0, "seen": set(),
+            "newest": None}
 
 
 def collect(item, answers, tools):
@@ -363,10 +371,15 @@ def advance(session, turn):
     if time.monotonic() >= turn["deadline"]:
         raise ValueError("remote turn deadline exceeded")
     result = api("get", "/api/session/" + session + "/message?order=desc&limit=" + str(PAGE_LIMIT),
-                 timeout=min(10.0, TURN_TIMEOUT))
+                 timeout=min(10.0, TURN_TIMEOUT), cap=MESSAGE_CAP)
     messages = result.get("data")
     if not isinstance(messages, list) or len(messages) > PAGE_LIMIT:
         raise ValueError("invalid session messages")
+    # Any new newest message is progress: the idle window restarts, so a long
+    # multi-tool turn is bounded by remote silence rather than total wall time.
+    if messages and messages[0].get("id") != turn["newest"]:
+        turn["newest"] = messages[0].get("id")
+        turn["deadline"] = time.monotonic() + TURN_TIMEOUT
     boundary = next((i for i, item in enumerate(messages) if item.get("id") == turn["messageId"]), None)
     if boundary is None:
         if len(messages) == PAGE_LIMIT:
