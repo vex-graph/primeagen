@@ -3,8 +3,9 @@
 ## Constitution Link
 
 The complete [workspace constitution](https://gist.github.com/vex-graph/4132a6c45cb6d3797c3e8eff2e94035a)
-governs this project. Workspace path: `../../preferences.md`. Read it first,
-then this document, test laws/current checklist, and actual implementation.
+governs this project. Workspace path: `../../gist/PREFERENCES.md`. Read it first,
+then this document, `../../tests/test-preferences.md`, current
+`../../gist/test-checklist.md`, and actual implementation.
 
 ## Law Index (Binding Matrix)
 

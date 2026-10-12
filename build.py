@@ -41,9 +41,9 @@ WORKSPACE = ROOT.parent.parent
 
 def build(output, compiler="clang", sanitizer=False):
     """Compile actual dependency sources, dropping unused HTTP send operations."""
-    api = Path(os.environ.get("API_HAVEN_SOURCE_DIR", WORKSPACE / "ecosystem/repos/api-haven/src"))
-    harness = Path(os.environ.get("HARNESS_SOURCE_DIR", WORKSPACE / "ecosystem/repos/harness/src"))
-    spoke = Path(os.environ.get("VEXSPOKE_SOURCE_DIR", WORKSPACE / "ecosystem/repos/vexspoke/src"))
+    api = Path(os.environ.get("API_HAVEN_SOURCE_DIR", WORKSPACE / "drivers/api-haven/src"))
+    harness = Path(os.environ.get("HARNESS_SOURCE_DIR", WORKSPACE / "interfaces/harness/src"))
+    spoke = Path(os.environ.get("VEXSPOKE_SOURCE_DIR", WORKSPACE / "host-behavior/vexspoke/src"))
     flags = ["-std=gnu23", "-Wall", "-Wextra", "-Werror", "-O2", "-ffunction-sections", "-fdata-sections"]
     if sys.platform == "darwin":
         flags += ["-arch", "arm64", "-mcpu=apple-m1", "-mmacosx-version-min=14.0", "-Wl,-dead_strip"]

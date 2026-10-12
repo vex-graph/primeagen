@@ -2,7 +2,7 @@
 # Explicit strict native tools build; never downloads, installs or executes tools.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-vex=${VEXSPOKE_SOURCE_DIR:-"$root/../../ecosystem/repos/vexspoke/src"}
+vex=${VEXSPOKE_SOURCE_DIR:-"$root/../../host-behavior/vexspoke/src"}
 mkdir -p "$root/.build"
 stage=$(mktemp "$root/.build/tools.XXXXXX")
 trap 'rm -f "$stage"' EXIT HUP INT TERM
