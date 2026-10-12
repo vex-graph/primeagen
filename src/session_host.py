@@ -82,7 +82,8 @@ from json_input import loads
 from process import run
 
 ROOT = Path(__file__).resolve().parent.parent
-TURN_TIMEOUT = 180.0  # Idle window: no observed remote progress for this long.
+TURN_TIMEOUT = 300.0  # Idle window: no observed remote progress for this long.
+MESSAGE_TIMEOUT = 25.0  # One message-page read; a slow page is retried, not fatal.
 WIRE_CAP = 65536
 # A tool-using turn's newest page carries tool arguments and content, so the
 # message read gets its own bounded budget rather than the frame cap. It stays
@@ -123,12 +124,12 @@ SESSION_PERMISSIONS = [
 ]
 
 
-def api(method, path, body=None, timeout=10.0, empty=False, cap=WIRE_CAP):
+def api(method, path, body=None, timeout=10.0, empty=False, cap=WIRE_CAP, allowStderr=False):
     """Use official CLI discovery/auth, never inspect its token store."""
     argv = ["opencode", "api", method, path]
     if body is not None:
         argv += ["--data", json.dumps(body, ensure_ascii=True, separators=(",", ":"))]
-    raw = run(argv, timeout=timeout, cap=cap)
+    raw = run(argv, timeout=timeout, cap=cap, allowStderr=allowStderr)
     if empty and not raw.strip():
         return {}
     result = loads(raw)
@@ -402,9 +403,22 @@ def advance(session, turn):
     if turn["awaiting"] is not None:
         return [], None, None
     if time.monotonic() >= turn["deadline"]:
-        raise ValueError("remote turn deadline exceeded")
-    result = api("get", "/api/session/" + session + "/message?order=desc&limit=" + str(PAGE_LIMIT),
-                 timeout=min(10.0, TURN_TIMEOUT), cap=MESSAGE_CAP)
+        raise ValueError("remote turn idle window expired")
+    # Pending approvals are polled every slice regardless of where this turn's
+    # prompt message sits in the page. The remote agent blocks on a permission
+    # request wherever it is in the turn, so checking only while the boundary is
+    # missing left the request unanswered until the watchdog killed the turn.
+    if time.monotonic() >= turn["nextCheck"]:
+        turn["nextCheck"] = time.monotonic() + PERMISSION_POLL
+        pending = request(session)
+        if pending is not None:
+            turn["awaiting"] = pending
+            return [], pending, None
+    try:
+        result = api("get", "/api/session/" + session + "/message?order=desc&limit=" + str(PAGE_LIMIT),
+                     timeout=MESSAGE_TIMEOUT, cap=MESSAGE_CAP, allowStderr=True)
+    except TimeoutError:
+        return [], None, None  # a slow page is not a dead turn; retry next slice
     messages = result.get("data")
     if not isinstance(messages, list) or len(messages) > PAGE_LIMIT:
         raise ValueError("invalid session messages")
@@ -417,12 +431,6 @@ def advance(session, turn):
     if boundary is None:
         if len(messages) == PAGE_LIMIT:
             raise ValueError("turn exceeded response page safety limit")
-        if time.monotonic() >= turn["nextCheck"]:
-            turn["nextCheck"] = time.monotonic() + PERMISSION_POLL
-            pending = request(session)
-            if pending is not None:
-                turn["awaiting"] = pending
-                return [], pending, None
         return [], None, None
     parsed = [(item, parts(item)) for item in reversed(messages[:boundary])]
     completed = False
@@ -519,7 +527,10 @@ def worker(model):
             if done is not None:
                 emit({"ok": True, "text": done})
                 turn = None
-        except (ValueError, OSError):
+        except (ValueError, OSError) as error:
+            # One classified line before the terminal poisons the wire: without it
+            # a failed turn is indistinguishable from a dead server.
+            emit({"note": "session error: " + clip(str(error), 120)})
             interrupt(session)
             print('{"ok":false,"text":"OpenCode session failed"}', flush=True)
             return 1
