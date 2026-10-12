@@ -46,7 +46,7 @@
  *   int writeFd : borrowed nonblocking host request pipe; -1 unbound.
  *   bool owo : selects canonical Owo_instructions for subsequent turns.
  *   uint32_t jobId : current Haven job; zero means idle.
- *   uint64_t startedMs : monotonic admission time for whole-turn deadline.
+ *   uint64_t startedMs : monotonic clock of the last observed progress.
  *   char request[SESSION_REQUEST_CAP] : bounded outbound JSON frame queue.
  *   size_t requestLength : queued frame bytes, including newline.
  *   size_t requestOffset : bytes already accepted by the pipe.
@@ -208,16 +208,20 @@ static HarnessStatus pollJob(void *context, void *handle, uint64_t timeoutMs) {
         else if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
             goto fail;
     }
-    /* The human wait is not the model's budget: while an approval is displayed the
-     * deadline is suspended and SessionBridge_decide restarts it on submission. */
-    if (!(*self).awaiting) {
-        uint64_t now = nowMs();
-        if (!now || now < (*self).startedMs || now - (*self).startedMs >= timeoutMs)
-            goto fail;
-    }
-    /* Exactly one frame per call keeps a burst of streamed notes ordered. */
+    /* Exactly one frame per call keeps a burst of streamed notes ordered. A frame
+     * already buffered is progress we hold, so it is consumed before the watchdog
+     * is consulted; the watchdog only measures silence with nothing in hand. */
     char *newline = memchr((*self).response, '\n', (*self).responseLength);
     if (newline == nullptr) {
+        /* The human wait is not the model's budget: while an approval is displayed
+         * the watchdog is suspended and SessionBridge_decide restarts it on
+         * submission. Otherwise it measures silence since the last frame, not the
+         * turn's total duration, so tool-using turns may run for minutes. */
+        if (!(*self).awaiting) {
+            uint64_t now = nowMs();
+            if (!now || now < (*self).startedMs || now - (*self).startedMs >= timeoutMs)
+                goto fail;
+        }
         if ((*self).responseLength >= sizeof((*self).response) - 1)
             goto fail;
         ssize_t n = read((*self).readFd, (*self).response + (*self).responseLength,
@@ -249,6 +253,11 @@ static HarnessStatus pollJob(void *context, void *handle, uint64_t timeoutMs) {
     memmove((*self).response, newline + 1, remaining);
     (*self).responseLength = remaining;
     if (status == HARNESS_STATUS_TIMEOUT)
+        goto fail;
+    /* Any frame is progress: the watchdog measures remote silence, not total
+     * duration, so a long multi-tool turn is not killed for taking minutes. */
+    (*self).startedMs = nowMs();
+    if (!(*self).startedMs)
         goto fail;
     return status;
 fail:

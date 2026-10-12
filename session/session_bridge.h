@@ -7,8 +7,8 @@
 /* Explicit per-turn wire safety bounds, not history or session-count limits. */
 #define SESSION_REQUEST_CAP 16384u
 #define SESSION_RESPONSE_CAP 65536u
-#define SESSION_TIMEOUT_MS_DEFAULT 120000u
-#define SESSION_TIMEOUT_MS_MAX 120000u /* Local turn watchdog safety ceiling. */
+#define SESSION_TIMEOUT_MS_DEFAULT 300000u /* Idle watchdog: no frame for 5 minutes. */
+#define SESSION_TIMEOUT_MS_MAX 600000u     /* Local idle-watchdog safety ceiling. */
 #define SESSION_APPROVAL_ID_CAP 160u   /* Remote permission identity + NUL. */
 #define SESSION_APPROVAL_LABEL_CAP 256u /* Bounded display text; host truncates. */
 #define SESSION_NOTE_CAP 512u          /* One bounded streamed activity line. */
