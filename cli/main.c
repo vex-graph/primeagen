@@ -93,14 +93,18 @@
 #define TUI_CTRL_Q 17
 #define TUI_CTRL_L 12
 #define TUI_CTRL_T 20
-/* This SDK's ncurses is NCURSES_MOUSE_VERSION 1, which has room for a fifth
- * button at shift 24 but does not declare BUTTON5_PRESSED. Without an explicit
- * bit, wheel-down is absent from mousemask and silently unreachable. */
+/* This SDK's ncurses is NCURSES_MOUSE_VERSION 1. Its fifth 6-bit slot holds the
+ * CTRL/SHIFT/ALT modifier bits, so a real button-5 press cannot be declared the
+ * way BUTTON1..BUTTON4 are; there is no BUTTON5_PRESSED to register. ncurses can
+ * still encode a wheel-down as a press in that slot, so we probe it directly and
+ * only accept it when no actual button is involved, which keeps a real
+ * shift-click (BUTTON1 plus the modifier) from scrolling. */
 #if NCURSES_MOUSE_VERSION > 1
 #define TUI_WHEEL_DOWN BUTTON5_PRESSED
 #else
 #define TUI_WHEEL_DOWN ((mmask_t) (NCURSES_BUTTON_PRESSED << 24))
 #endif
+#define TUI_BUTTON_BITS (BUTTON1_PRESSED | BUTTON1_RELEASED | BUTTON1_CLICKED | BUTTON4_PRESSED)
 #define TUI_COMMAND_MESSAGE 1
 #define TUI_COMMAND_CONNECT 2
 #define TUI_COMMAND_QUIT 3
@@ -295,7 +299,7 @@ int main(int argc, char **argv) {
     }
     timeout(TUI_POLL_MS);
     mouseinterval(0);
-    mmask_t mask = BUTTON1_PRESSED | BUTTON4_PRESSED | TUI_WHEEL_DOWN;
+    mmask_t mask = ALL_MOUSE_EVENTS; // never let the mask hide an encoded wheel-down
     mousemask(selectText ? 0 : mask, nullptr);
     char *row = nullptr;
     uint8_t *styles = nullptr;
@@ -315,12 +319,15 @@ int main(int argc, char **argv) {
         if (completed) {
             const char *text = SessionBridge_getText(&bridge);
             ok = openTurn(&state, &turnOpen);
-            if (ok && completed > 0)
-                ok = Tui_addStyled(&state, "", 0, 0, false) &&
-                     Tui_addStyled(&state, "answer:", 7, TEXT_STYLE_ASSISTANT | TEXT_STYLE_BOLD, false) &&
-                     Tui_addStyled(&state, text, strlen(text), 0, true) &&
-                     Tui_addStyled(&state, "", 0, 0, false);
-            else if (ok)
+            if (ok && completed > 0) {
+                // A turn that streamed its conclusion ends without an answer block.
+                if (*text != '\0')
+                    ok = Tui_addStyled(&state, "", 0, 0, false) &&
+                         Tui_addStyled(&state, "answer:", 7, TEXT_STYLE_ASSISTANT | TEXT_STYLE_BOLD, false) &&
+                         Tui_addStyled(&state, text, strlen(text), 0, true);
+                if (ok)
+                    ok = Tui_addStyled(&state, "", 0, 0, false);
+            } else if (ok)
                 ok = Tui_addStyled(&state, "Connection error:", 17, TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false) &&
                      Tui_addStyled(&state, text, strlen(text), TEXT_STYLE_ERROR, false) &&
                      Tui_addStyled(&state, "", 0, 0, false);
@@ -451,9 +458,10 @@ int main(int argc, char **argv) {
             if (selectText)
                 continue; // terminal, not application, owns selection/copy
             TuiMouseKind kind;
+            bool wheelDown = (event.bstate & TUI_WHEEL_DOWN) != 0 && (event.bstate & TUI_BUTTON_BITS) == 0;
             if (event.bstate & BUTTON4_PRESSED)
                 kind = TUI_MOUSE_WHEEL_UP;
-            else if (event.bstate & TUI_WHEEL_DOWN)
+            else if (wheelDown)
                 kind = TUI_MOUSE_WHEEL_DOWN;
             else if (event.bstate & BUTTON1_PRESSED)
                 kind = TUI_MOUSE_CLICK;
@@ -471,7 +479,8 @@ int main(int argc, char **argv) {
             }
             if (event.x < chatLeft)
                 continue; // the list/rail never scroll the chat viewport
-            if (selection != 0 && kind != TUI_MOUSE_CLICK)
+            // Scrolling the chat is always available, whatever the list selection.
+            if (selection != 0 && kind != TUI_MOUSE_CLICK && kind != TUI_MOUSE_WHEEL_UP && kind != TUI_MOUSE_WHEEL_DOWN)
                 continue;
             TuiMouseAction action = TuiMouse_dispatch(&state, event.x - chatLeft, event.y, kind);
             if (action == TUI_MOUSE_QUIT)
@@ -486,15 +495,15 @@ int main(int argc, char **argv) {
             else if (kind == TUI_MOUSE_CLICK)
                 focused = false;
             Tui_setDirty(&state, true);
-        } else if (key == KEY_PPAGE && (selection == 0 || selectText))
+        } else if (key == KEY_PPAGE)
             Tui_scrollBy(&state, (int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_NPAGE && (selection == 0 || selectText))
+        else if (key == KEY_NPAGE)
             Tui_scrollBy(&state, -(int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_UP && (selection == 0 || selectText))
+        else if (key == KEY_UP)
             Tui_scrollBy(&state, 1);
-        else if (key == KEY_DOWN && (selection == 0 || selectText))
+        else if (key == KEY_DOWN)
             Tui_scrollBy(&state, -1);
-        else if (key == KEY_END && (selection == 0 || selectText))
+        else if (key == KEY_END)
             Tui_setScroll(&state, 0);
         else if (key == TUI_CTRL_L && selection == 0) {
             Tui_clear(&state);
