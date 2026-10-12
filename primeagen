@@ -6,9 +6,9 @@ if [ "${1:-}" = session ]; then
 fi
 if [ "${1:-}" = tui ]; then
     shift
-    exec "$root/.build/tui" --session-host "$root/src/session_host.py" "$@"
+    exec "$root/.build/tui" --session-host "$root/src/session_host.py" --update-payload "$root/.build/payload" --update-checksum "$root/.build/cli_view.sha256" "$@"
 fi
 if [ "$#" -eq 0 ]; then
-    exec "$root/.build/tui" --session-host "$root/src/session_host.py"
+    exec "$root/.build/tui" --session-host "$root/src/session_host.py" --update-payload "$root/.build/payload" --update-checksum "$root/.build/cli_view.sha256"
 fi
 exec python3 "$root/src/cli.py" "$@"
