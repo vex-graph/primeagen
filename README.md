@@ -149,35 +149,49 @@ pending question never expires the model deadline. Trusted server/configuration/
 plugins are required: echoed rules and fake tests do not prove live server policy
 enforcement or sandboxing. Only one bounded request is shown at a time.
 
-**The turn is a stream, not one lump.** Sending shows your prompt, then a live
-placeholder:
+**The turn is a stream, not one lump.** Sending shows your prompt, then the turn
+unfolds as it happens:
 
 ```text
 You:
 refactor the parser and show me the diff
 
 OpenCode:
+lemme do it for you
 read: src/parser.c (lines 40-92)
+thinking: the helper duplicates the call site, so extract it
+ah interesting, the call site is the odd one
 edit: src/parser.c
   - old line removed
   + new line added
+shell: git diff --stat
 working...
 
 answer:
-done — extracted the helper and updated the call site
+Done — extracted the helper and updated the call site
 
 ```
 
-The speaker label appears once per turn; each tool line is appended the moment
-OpenCode reports its arguments, and the trailing `working...` line is a live
-placeholder that moves down as output arrives and disappears when the turn ends.
-The final answer is labelled `answer:`. Notes are bounded display text — never
-commands, never re-executed here — and edit diffs are a plain `-`/`+` list (no
-color yet; the language layer owns syntax coloring). Scroll the transcript with
-the wheel, **Up/Down arrows** (one row) or **PgUp/PgDn** (one page); `End` jumps
-to the tail. On this macOS ncurses (MOUSE_VERSION 1) wheel-down is not declared
-as `BUTTON5_PRESSED`, so Primeagen registers the documented fifth-button bit
-itself — arrows always work regardless.
+The speaker label appears once per turn. Model prose arrives inline as it is
+produced, `thinking:` lines show the reasoning parts, and each tool call prints
+the moment its arguments are known (`read:`, `shell:`, `websearch:`, `glob:`/
+`grep:`, `write:`/`create:`, and `edit:` with a plain uncolored `-`/`+` list).
+The newest message's prose is held back as the turn's conclusion and printed
+under `answer:`, so the flow ends where it should; a turn that already streamed
+its conclusion simply ends. `working...` is a live placeholder at the bottom that
+moves down as output arrives and disappears when the turn ends. All of it is
+bounded display text — never commands, never re-executed here; syntax coloring
+stays the language layer's job.
+
+**Scrolling.** The transcript scrolls with the wheel, **Up/Down** (one row),
+**PgUp/PgDn** (one page) and **End** (jump to the tail), whatever the list
+selection is; the footer names them. One honest limitation: this macOS ncurses is
+`NCURSES_MOUSE_VERSION 1`, whose fifth 6-bit slot holds the ctrl/shift/alt
+modifier bits rather than a fifth button — so there is no `BUTTON5_PRESSED` for
+the terminal to deliver and **wheel-down cannot be expressed in this ABI**. Wheel-up
+works; Primeagen also probes the reused slot directly and accepts it as wheel-down
+only when no real button is involved, so a shift-click never scrolls. The keyboard
+path is the guaranteed one; a GUI would not have this limitation.
 
 OwO instructions come from the same canonical C function, not a copied Python prompt.
 Input remains available while a turn runs; Enter while busy preserves it. Final

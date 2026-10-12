@@ -83,17 +83,23 @@ are taken from canonical C Owo_instructions. Native TUI polls borrowed nonblocki
 pipes, not sockets or workers. Derived SessionBridge wire buffers/identities change
 only through admission/decide/poll/free (Conflict Triage Law managed accessor
 exception).
-A turn is presented as a stream, not one lump: the session host emits a bounded
-`{note:...}` line as each tool call reports its arguments, and the bridge surfaces
-exactly one frame per poll through `SessionBridge_takeNote`, so a burst of notes
-stays ordered and none is dropped. The terminal appends them under one per-turn
-speaker label, keeps a live trailing `working...` placeholder that is popped before
-any real output, and ends the turn with `answer:`. Notes are bounded display text
-derived from remote arguments (a `-`/`+` diff list for edits), never commands and
-never a local re-execution; coloring stays the language layer's job. Transcript
-scrolling is wheel-up/down (the fifth-button bit is registered explicitly because
-this SDK's ncurses is MOUSE_VERSION 1 and does not declare `BUTTON5_PRESSED`),
-Up/Down one row, PgUp/PgDn one page and End to tail.
+A turn is presented as a stream, not one lump: model prose and `thinking:` reasoning
+parts arrive inline as they are produced, each tool call prints the moment its
+arguments are reported, and the newest assistant message's prose is held back as
+the turn's conclusion under `answer:`. The session host emits these as bounded
+`{note:...}` lines and the bridge surfaces exactly one frame per poll through
+`SessionBridge_takeNote`, so a burst stays ordered and none is dropped. The
+terminal appends them under one per-turn speaker label and keeps a live trailing
+`working...` placeholder that is popped before any real output. Notes are bounded
+display text derived from remote content (a `-`/`+` diff list for edits), never
+commands and never a local re-execution; coloring stays the language layer's job.
+Transcript scrolling is wheel-up, Up/Down one row, PgUp/PgDn one page and End to
+tail, and is available whatever the list selection. Wheel-down is not expressible
+in this platform's ncurses ABI (`NCURSES_MOUSE_VERSION 1` spends the fifth 6-bit
+slot on the ctrl/shift/alt modifiers instead of a fifth button, so no
+`BUTTON5_PRESSED` exists to register); Primeagen probes the reused slot directly
+and accepts it only when no real button bit is present, so a shift-click never
+scrolls. The keyboard path is the guaranteed one.
 Timing is an idle watchdog, not a total budget. The Python host restarts its
 window whenever the newest remote message changes and the bridge restarts its own
 on every consumed frame, so a multi-tool turn is bounded by remote silence rather
