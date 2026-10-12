@@ -23,11 +23,15 @@ FUNCTION REGISTRY:
   decide(session, target, decision) : reply once/always/reject to one request.
   begin(session, prompt, instructions) : admit one prompt under a turn deadline.
   collect(item, answers, tools) : project one assistant message, bounded.
+  parts(item) : ordered, validated display parts of one assistant message.
+  narration(text) : bounded single-line prose notes.
   clip(value, cap) : one bounded printable fragment from remote text.
   pathOf(arguments) : bounded target path from a tool call's arguments.
   diffLines(old, new, cap) : bounded common-prefix/suffix line diff.
   summarize(name, arguments) : one tool call as bounded transcript lines.
-  newNotes(turn, tools) : report each tool call once, as soon as args are known.
+  stream(turn, item, items, final, notes) : append a message's new parts in order;
+      thinking, tool lines and prose stream immediately, while the newest message's
+      prose is held so the turn ends on its conclusion.
   advance(session, turn) : one bounded step; returns (notes, ask, done). The
       deadline is an idle window restarted by observed remote progress, so a long
       multi-tool turn is bounded by silence, not by total wall time.
@@ -90,6 +94,7 @@ LABEL_CAP = 200  # Bounded native display text; the C bridge rejects overflow.
 NOTE_CAP = 400   # Bounded streamed activity line; below the bridge's 511-byte cap.
 LINE_CAP = 160   # Bounded single argument fragment inside one note line.
 DIFF_LINE_CAP = 12  # Bounded added/removed lines shown per edit.
+NARRATION_LINES = 6  # Bounded prose lines streamed per assistant message.
 PERMISSION_POLL = 1.0  # Pending-approval poll cadence, not a turn budget.
 DECISIONS = ("once", "always", "reject")
 # Effective effects the default policy must produce after evaluation. Inspection
@@ -250,19 +255,20 @@ def begin(session, prompt, instructions):
     api("post", "/api/session/" + session + "/prompt", {"id": message_id, "text": instructions + prompt})
     return {"messageId": message_id, "deadline": time.monotonic() + TURN_TIMEOUT,
             "awaiting": None, "awaitingSince": 0.0, "nextCheck": 0.0, "seen": set(),
-            "newest": None}
+            "said": set(), "held": [], "flowed": False, "newest": None}
 
 
-def collect(item, answers, tools):
-    """Project one assistant message; tool calls are reported, never executed here."""
+def parts(item):
+    """Ordered, validated display parts of one assistant message."""
     if not isinstance(item, dict) or item.get("type") != "assistant":
-        return
+        return []
     if item.get("error") or item.get("finish") in ("error", "length", "content-filter"):
         raise ValueError("agent turn rejected")
     content = item.get("content", [])
     if not isinstance(content, list) or len(content) > PAGE_LIMIT:
         raise ValueError("invalid assistant content")
-    for part in content:
+    out = []
+    for index, part in enumerate(content):
         if not isinstance(part, dict):
             raise ValueError("invalid assistant content part")
         kind = part.get("type")
@@ -274,12 +280,19 @@ def collect(item, answers, tools):
             if not isinstance(identity, str) or not identity or len(identity) > 128:
                 raise ValueError("invalid tool identity")
             state = part.get("state")
-            tools.append({"id": identity, "name": name, "state": state if isinstance(state, dict) else {}})
-        elif kind == "text":
+            out.append(("tool", identity, name, state if isinstance(state, dict) else {}))
+        elif kind in ("text", "reasoning"):
             text = part.get("text")
             if not isinstance(text, str):
-                raise ValueError("invalid answer text")
-            answers.append(text)
+                raise ValueError("invalid assistant text")
+            out.append((kind, index, text))
+        # Unrecognized part kinds stay ignored rather than guessed at.
+    return out
+
+
+def narration(text):
+    """Model prose as bounded single-line notes; empty lines are dropped."""
+    return [clip(line) for line in text.splitlines() if line.strip()][:NARRATION_LINES]
 
 
 def clip(value, cap=LINE_CAP):
@@ -349,19 +362,39 @@ def summarize(name, arguments):
     return [f"{tool}:"]
 
 
-def newNotes(turn, tools):
-    """Report each tool call once, as soon as its arguments are known."""
-    notes = []
-    for tool in tools:
-        if tool["id"] in turn["seen"]:
-            continue
-        state = tool["state"]
-        arguments = state.get("input")
-        if state.get("status") not in ("running", "completed", "error") or not isinstance(arguments, dict):
-            continue
-        turn["seen"].add(tool["id"])
-        notes.extend(summarize(tool["name"], arguments))
-    return [line[:NOTE_CAP] for line in notes]
+def stream(turn, item, items, final, notes):
+    """Append one assistant message's new parts in order: thinking, tool lines and
+    prose. The newest message's prose is held as the answer rather than streamed,
+    so a turn reads as a flow that ends on its conclusion."""
+    identity = item.get("id")
+    for part in items:
+        kind = part[0]
+        if kind == "tool":
+            _, key, name, state = part
+            if key in turn["seen"]:
+                continue
+            arguments = state.get("input")
+            if state.get("status") not in ("running", "completed", "error") or not isinstance(arguments, dict):
+                continue
+            turn["seen"].add(key)
+            notes.extend(summarize(name, arguments))
+        elif kind == "reasoning":
+            _, index, text = part
+            mark = (identity, "r", index)
+            if mark in turn["said"] or not text.strip():
+                continue
+            turn["said"].add(mark)
+            notes.append("thinking: " + clip(text, NOTE_CAP - 12))
+        else:
+            _, index, text = part
+            mark = (identity, "t", index)
+            if mark in turn["said"] or not text.strip():
+                continue
+            if final:
+                continue  # held as this turn's conclusion; streamed if superseded
+            turn["said"].add(mark)
+            notes.extend(narration(text))
+    return notes
 
 
 def advance(session, turn):
@@ -391,18 +424,30 @@ def advance(session, turn):
                 turn["awaiting"] = pending
                 return [], pending, None
         return [], None, None
-    answers, tools, completed = [], [], False
-    for item in list(reversed(messages[:boundary])):
-        collect(item, answers, tools)
+    parsed = [(item, parts(item)) for item in reversed(messages[:boundary])]
+    completed = False
+    for item, _ in parsed:
         if isinstance(item, dict) and item.get("type") == "idle":
             if item.get("outcome") != "succeeded":
                 raise ValueError("remote session did not succeed")
             completed = True
-    notes = newNotes(turn, tools)
+    assistants = [item for item, _ in parsed if isinstance(item, dict) and item.get("type") == "assistant"]
+    newest = assistants[-1].get("id") if assistants else None
+    notes = []
+    turn["held"] = []
+    for item, items in parsed:
+        if not isinstance(item, dict) or item.get("type") != "assistant":
+            continue
+        final = item.get("id") == newest
+        if final:
+            turn["held"] = [part[2] for part in items if part[0] == "text" and part[2].strip()]
+        stream(turn, item, items, final, notes)
+    if notes:
+        turn["flowed"] = True
     if not completed:
         return notes, None, None
-    text = "\n".join(answers)
-    if not text:
+    text = "\n".join(turn["held"]).strip()
+    if not text and not turn["flowed"]:
         text = "(no text returned)"  # a completed turn may be tool-only or silent
     if len(json.dumps({"ok": True, "text": text}, ensure_ascii=False).encode("utf-8")) >= WIRE_CAP - 1:
         raise ValueError("oversized session answer")
