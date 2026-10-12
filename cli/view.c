@@ -1,9 +1,11 @@
+#define _XOPEN_SOURCE_EXTENDED 1
 #include "cli/view.h"
 #include "hot/hot.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 #include <curses.h>
 #include <string.h>
+#include <wchar.h>
 
 ;;DEFINITION
 /* The reloadable terminal view paints resident Tui state. It owns neither the
@@ -21,6 +23,21 @@
  *   int Primeagen_command(Tui *, bool sessionMode) : local command admission;
  *       emits display notices/actions, never executes model/provider/tools.
  * PRIVATE: attributes(style) : host-defined visible style to ncurses attributes.
+ *   drawRegion(...) : legacy/full-width or right-pane paint with fixed input.
+ *   symbol(y, glyph, fallback, selected) : one-cell monochrome rail glyph.
+ * PUBLIC PANEL SURFACE:
+ *   int Primeagen_chatLeft(int columns, int listWidth) : adaptive chat origin.
+ *   bool Primeagen_panelsClick(x,y,rows,columns,listWidth,panel,selection,
+ *                             int *outPanel,int *outSelection)
+ *       Stateless hit admission; preserves outputs on invalid/outside input.
+ *   bool Primeagen_drawPanels(Tui *,bool,bool,bool,bool,int panel,int selection,
+ *                             int listWidth,char *row,uint8_t *styles,size_t cap)
+ *       Connected rail + people/server/channel preview + independent chat region.
+ * PANEL CONTRACT: host owns mode/selection, not a provider registry. Selection 0
+ * is the existing OpenCode chat; 1..5 are explicitly offline preview entries.
+ * Preview selection never displays or sends another conversation's draft/history.
+ * Switching returns to the same resident live chat. Old draw ABI is retained;
+ * the new export receives navigation by value and changes no Tui layout.
  * EXPORTED DATA: const uint64_t Hot_cold_abi : compatible cold module ABI.
  * SLOT RECORD: behaviorless export rows {const char *name; void *fn}.
  * CONTRACT: owner-thread, live screen/model/buffers; nullptr entry rejects;
@@ -53,7 +70,7 @@ int Primeagen_command(Tui *state, bool sessionMode) {
     }
     const char *notice;
     if (strcmp(input, "/help") == 0)
-        notice = "/connect: existing OpenCode Go login | /update: local built CLI, pause/resolve/continue | /clear: display only | /quit: exit. Chat-only; settings/servers are not implemented yet.";
+        notice = "/connect: existing OpenCode Go login | /update: local built CLI, pause/resolve/continue | /clear: display only | /quit: exit. Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode. Example entries are previews; settings/roles are unfinished.";
     else if (strcmp(input, "/connect") == 0)
         notice = "Already connected to OpenCode. Enter sends; remote history is retained. Tools remain denied.";
     else
@@ -81,58 +98,175 @@ static chtype attributes(uint8_t style) {
     return value;
 }
 
-bool Primeagen_draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy,
-                    char *row, uint8_t *styles, size_t cap) {
+static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, bool busy,
+                       int left, int selection, char *row, uint8_t *styles, size_t cap) {
     if (state == nullptr)
         return false;
     int rows, columns;
     Tui_getSize(state, &rows, &columns);
-    erase();
     if (rows < TUI_MIN_ROWS || columns < TUI_MIN_COLUMNS) {
         mvaddnstr(0, 0, "Resize terminal; Ctrl-Q exits", columns > 1 ? columns - 1 : 0);
         curs_set(0);
         return refresh() != ERR;
     }
     attron(COLOR_PAIR(VIEW_HEADER) | A_BOLD);
-    mvaddnstr(0, 1, PRIMEAGEN_VIEW_TITLE, columns - 16);
+    mvaddnstr(0, left + 1, PRIMEAGEN_VIEW_TITLE, columns - 16);
     attroff(COLOR_PAIR(VIEW_HEADER) | A_BOLD);
     attron(COLOR_PAIR(VIEW_ACCENT));
-    mvaddstr(0, columns - 15, "[Clear]");
-    mvaddstr(0, columns - 7, "[Quit]");
+    mvaddstr(0, left + columns - 15, "[Clear]");
+    mvaddstr(0, left + columns - 7, "[Quit]");
     attroff(COLOR_PAIR(VIEW_ACCENT));
-    mvhline(1, 0, ACS_HLINE, columns);
+    mvhline(1, left, ACS_HLINE, columns);
     size_t first = Tui_getFirstVisibleRow(state);
     size_t total = Tui_getVisualRowCount(state);
     size_t height = Tui_getViewportHeight(state);
-    for (size_t i = 0; i < height && first + i < total; ++i) {
+    for (size_t i = 0; selection == 0 && i < height && first + i < total; ++i) {
         if (!Tui_copyStyledRow(state, first + i, row, styles, cap, nullptr))
             return false;
         for (size_t j = 0; row[j] != '\0'; ++j)
-            mvaddch((int) i + 2, (int) j + 1, (chtype) (unsigned char) row[j] | attributes(styles[j]));
+            mvaddch((int) i + 2, left + (int) j + 1, (chtype) (unsigned char) row[j] | attributes(styles[j]));
     }
-    mvhline(rows - 4, 0, ACS_HLINE, columns);
+    if (selection != 0) {
+        const char *names[] = {"OpenCode", "Sola (@sola6sol)", "WhateverName (@whatever)", "Ecosystem / #channel1", "Ecosystem / #channel2", "Ecosystem / #channel3"};
+        mvaddnstr(2, left + 1, names[selection], columns - 2);
+        mvaddnstr(4, left + 1, "Preview only: no model/session attached.", columns - 2);
+        mvaddnstr(5, left + 1, "Select OpenCode to return to your chat.", columns - 2);
+    }
+    mvhline(rows - 4, left, ACS_HLINE, columns);
     attron(COLOR_PAIR(VIEW_STATUS) | A_DIM);
-    mvaddnstr(rows - 3, 1, sessionMode ? "/help | /update | PgUp/PgDn scroll | Ctrl-Q quit" : "/connect (click here) | /help | /update | Ctrl-Q quit", columns - 2);
+    mvaddnstr(rows - 3, left + 1, sessionMode ? "/help | /update | PgUp/PgDn scroll | Ctrl-Q quit" : "/connect (click here) | /help | /update | Ctrl-Q quit", columns - 2);
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
     attron(COLOR_PAIR(VIEW_INPUT) | A_BOLD);
-    mvaddstr(rows - 2, 0, "> ");
+    mvaddstr(rows - 2, left, "> ");
     attroff(COLOR_PAIR(VIEW_INPUT) | A_BOLD);
     size_t length = Tui_getInputLength(state);
     size_t width = (size_t) columns - 3;
     size_t offset = length > width ? length - width : 0;
-    mvaddnstr(rows - 2, 2, Tui_getInput(state) + offset, (int) width);
+    if (selection == 0)
+        mvaddnstr(rows - 2, left + 2, Tui_getInput(state) + offset, (int) width);
     const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | tools denied | Enter sends") : (owo ? "OwO | disconnected | /connect uses Go login" : "Disconnected | /connect uses OpenCode Go login");
     attron(COLOR_PAIR(VIEW_STATUS) | A_DIM);
-    mvaddnstr(rows - 1, 0, status, columns - 1);
+    mvaddnstr(rows - 1, left, selection == 0 ? status : "Offline preview | Ctrl-P People | Ctrl-S Servers", columns - 1);
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
-    curs_set(focused ? 1 : 0);
-    move(rows - 2, 2 + (int) (length - offset));
+    curs_set(focused && selection == 0 ? 1 : 0);
+    move(rows - 2, left + 2 + (int) (selection == 0 ? length - offset : 0));
+    return true;
+}
+
+bool Primeagen_draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy,
+                    char *row, uint8_t *styles, size_t cap) {
+    erase();
+    if (!drawRegion(state, owo, focused, sessionMode, busy, 0, 0, row, styles, cap))
+        return false;
+    return refresh() != ERR;
+}
+
+int Primeagen_chatLeft(int columns, int listWidth) {
+    if (columns < PRIMEAGEN_PANELS_MIN_COLUMNS || listWidth < 12)
+        return 0;
+    int width = listWidth < columns / 2 ? listWidth : columns / 2;
+    return PRIMEAGEN_RAIL_WIDTH + width;
+}
+
+bool Primeagen_panelsClick(int x, int y, int rows, int columns, int listWidth,
+                           int panel, int selection, int *outPanel, int *outSelection) {
+    int left = Primeagen_chatLeft(columns, listWidth);
+    if (outPanel == nullptr || outSelection == nullptr || panel < 0 || panel > 2 ||
+        selection < 0 || selection > 5 || rows < TUI_MIN_ROWS || left == 0 ||
+        x <= 0 || x == PRIMEAGEN_RAIL_WIDTH - 1 || x >= left - 1 || y < 0 || y >= rows)
+        return false;
+    if (x < PRIMEAGEN_RAIL_WIDTH - 1) {
+        if (y != 1 && y != 3)
+            return false;
+        panel = y == 1 ? PRIMEAGEN_PANEL_PEOPLE : PRIMEAGEN_PANEL_SERVERS;
+    } else if (panel == PRIMEAGEN_PANEL_PEOPLE) {
+        if (y >= 2 && y <= 3)
+            selection = 0;
+        else if (y >= 5 && y <= 6)
+            selection = 1;
+        else if (y >= 8 && y <= 9)
+            selection = 2;
+        else
+            return false;
+    } else if (panel == PRIMEAGEN_PANEL_SERVERS && y == 2) {
+        panel = PRIMEAGEN_PANEL_CHANNELS;
+        selection = 3;
+    } else if (panel == PRIMEAGEN_PANEL_CHANNELS && y == 2)
+        panel = PRIMEAGEN_PANEL_SERVERS;
+    else if (panel == PRIMEAGEN_PANEL_CHANNELS && y >= 4 && y <= 6)
+        selection = y - 1;
+    else
+        return false;
+    *outPanel = panel;
+    *outSelection = selection;
+    return true;
+}
+
+static void symbol(int y, const wchar_t *text, char fallback, bool selected) {
+    cchar_t glyph;
+    attr_t attr = selected ? A_REVERSE | A_BOLD : A_NORMAL;
+    if (wcwidth(*text) == 1 && setcchar(&glyph, text, attr, 0, nullptr) == OK)
+        mvadd_wch(y, 2, &glyph);
+    else
+        mvaddch(y, 2, (chtype) fallback | attr);
+}
+
+bool Primeagen_drawPanels(Tui *state, bool owo, bool focused, bool sessionMode, bool busy,
+                          int panel, int selection, int listWidth,
+                          char *row, uint8_t *styles, size_t cap) {
+    if (state == nullptr || panel < 0 || panel > 2 || selection < 0 || selection > 5)
+        return false;
+    int rows, columns;
+    getmaxyx(stdscr, rows, columns);
+    int left = Primeagen_chatLeft(columns, listWidth);
+    erase();
+    if (!drawRegion(state, owo, focused, sessionMode, busy, left, selection, row, styles, cap))
+        return false;
+    int caretY, caretX;
+    getyx(stdscr, caretY, caretX);
+    if (left > 0 && rows >= TUI_MIN_ROWS) {
+        mvvline(0, 4, ACS_VLINE, rows);
+        mvvline(0, left - 1, ACS_VLINE, rows);
+        for (int y = 0; y <= 4; y += 2) {
+            mvhline(y, 0, ACS_HLINE, 4);
+            mvaddch(y, 0, y == 0 ? ACS_ULCORNER : y == 4 ? ACS_LLCORNER : ACS_LTEE);
+            mvaddch(y, 4, y == 0 ? ACS_TTEE : y == 4 ? ACS_RTEE : ACS_PLUS);
+        }
+        mvaddch(1, 0, ACS_VLINE);
+        mvaddch(3, 0, ACS_VLINE);
+        symbol(1, L"⌘", '@', panel == PRIMEAGEN_PANEL_PEOPLE);
+        symbol(3, L"▦", '#', panel != PRIMEAGEN_PANEL_PEOPLE);
+        mvaddnstr(0, 6, panel == PRIMEAGEN_PANEL_PEOPLE ? "People" : panel == PRIMEAGEN_PANEL_SERVERS ? "Servers" : "Ecosystem", left - 8);
+        if (panel == PRIMEAGEN_PANEL_PEOPLE) {
+            const char *lines[] = {"OpenCode", "[configured connection]", "", "Sola (@sola6sol)", "[GPT-6.1 sol default]", "", "WhateverName (@whatever)", "[Claude Sonnet 5 Low]", "", "Examples: preview only"};
+            for (int i = 0; i < 10 && i + 2 < rows; ++i) {
+                if ((selection == 0 && i < 2) || (selection == 1 && i >= 3 && i < 5) || (selection == 2 && i >= 6 && i < 8))
+                    attron(A_REVERSE);
+                mvaddnstr(i + 2, 6, lines[i], left - 8);
+                attroff(A_REVERSE);
+            }
+        } else if (panel == PRIMEAGEN_PANEL_SERVERS)
+            mvaddnstr(2, 6, "Ecosystem [preview]", left - 8);
+        else {
+            mvaddnstr(2, 6, "< Servers (Ctrl-S)", left - 8);
+            for (int i = 0; i < 3 && i + 4 < rows; ++i) {
+                if (selection == i + 3)
+                    attron(A_REVERSE);
+                mvprintw(i + 4, 6, "#channel%d", i + 1);
+                attroff(A_REVERSE);
+            }
+            if (rows > 8)
+                mvaddnstr(8, 6, "Channels: preview only", left - 8);
+        }
+    }
+    move(caretY, caretX); // sidebar painting must not relocate the input caret
     return refresh() != ERR;
 }
 
 const void *VkModuleGetTrampolines(uint32_t *count) {
     static const struct { const char *name; void *fn; } exports[] = {
-        {"Primeagen_draw", (void*) Primeagen_draw}, {"Primeagen_command", (void*) Primeagen_command}
+        {"Primeagen_draw", (void*) Primeagen_draw}, {"Primeagen_command", (void*) Primeagen_command},
+        {"Primeagen_drawPanels", (void*) Primeagen_drawPanels}
     };
     if (count == nullptr)
         return nullptr;
