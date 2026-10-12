@@ -20,10 +20,18 @@
  * and reads advance incrementally on the terminal owner thread; no blocking wait
  * or provider API runs here. Cold admission bounds each frame and escapes JSON
  * through Vexspoke's writer. A malformed/failed/timed-out wire is poisoned rather
- * than risking attributing a late reply to another turn. Free cancels admission
- * before the host releases pipes; remote cancellation is best effort, not proof
- * of a killed server operation. Derived buffers/identity have no raw setters per
- * the Conflict Triage Law and Single Class Per File Law (Java Law). */
+ * than risking attributing a late reply to another turn.
+ *
+ * A turn can pause for a human. The host emits a bounded approval frame when the
+ * remote policy requires consent; the bridge records it as a pending question,
+ * keeps the turn open, and suspends its local deadline because the wait belongs
+ * to the terminal, not the model. SessionBridge_decide queues exactly one
+ * once/always/reject reply and restarts the remote watchdog. The bridge never
+ * decides by itself and never auto-approves: only an explicit terminal decision
+ * leaves here, and the durable project rule stays OpenCode's. Free cancels
+ * admission before the host releases pipes; remote cancellation is best effort,
+ * not proof of a killed server operation. Derived buffers/identity have no raw
+ * setters per the Conflict Triage Law and Single Class Per File Law (Java Law). */
 ;;OVERVIEW
 /* ============================================================================
  * CLASS: SessionBridge (session/session_bridge)
@@ -34,42 +42,68 @@
  *   bool owo : selects canonical Owo_instructions for subsequent turns.
  *   uint32_t jobId : current Haven job; zero means idle.
  *   uint64_t startedMs : monotonic admission time for whole-turn deadline.
- *   char request[SESSION_REQUEST_CAP] : bounded outbound JSON frame.
+ *   char request[SESSION_REQUEST_CAP] : bounded outbound JSON frame queue.
  *   size_t requestLength : queued frame bytes, including newline.
  *   size_t requestOffset : bytes already accepted by the pipe.
  *   char response[SESSION_RESPONSE_CAP] : inbound newline JSON frame.
  *   size_t responseLength : accumulated bytes; preserves partial frames.
  *   char text[SESSION_RESPONSE_CAP] : copied answer or safe generic error.
  *   bool failed : permanent poisoned-wire latch until host relaunch.
+ *   bool awaiting : an approval frame is displayed and unanswered.
+ *   uint32_t approvalSerial : increments per approval frame; display identity.
+ *   char approvalId[SESSION_APPROVAL_ID_CAP] : remote permission identity.
+ *   char approvalLabel[SESSION_APPROVAL_LABEL_CAP] : bounded display text.
+ *   char decision[8] : queued reply spelling; empty when nothing is queued.
  * FUNCTION REGISTRY:
  *   SessionBridge SessionBridge_0(void) : unbound.
  *   SessionBridge SessionBridge_2(int readFd, int writeFd) : borrowed pipes.
  *   bool SessionBridge_submit(SessionBridge *, const char *) : cold admission.
- *   int SessionBridge_poll(SessionBridge *) : bounded IO; complete text projection.
+ *   int SessionBridge_poll(SessionBridge *) : bounded IO; approval or completion.
  *   void SessionBridge_free(SessionBridge *) : cancel borrowed job, never close fd.
  *   void SessionBridge_setOwo(SessionBridge *, bool), bool SessionBridge_isOwo(const SessionBridge *)
  *   bool SessionBridge_isBusy(const SessionBridge *), const char *SessionBridge_getText(const SessionBridge *)
+ *   bool SessionBridge_isAwaiting(const SessionBridge *)
+ *   const char *SessionBridge_getApprovalLabel(const SessionBridge *)
+ *   uint32_t SessionBridge_getApprovalSerial(const SessionBridge *)
+ *   bool SessionBridge_decide(SessionBridge *, const char *) : queue once/always/reject.
  *   bool SessionBridge_setTimeout(SessionBridge *, uint64_t), uint64_t SessionBridge_getTimeout(const SessionBridge *) : validated cold current watchdog, 1..120000ms.
  *   bool SessionBridge_toString(const SessionBridge *, char *, size_t, bool *) : bounded value.
  *   bool SessionBridge_toStringStruct(const SessionBridge *, char *, size_t, bool *) : bounded redacted fields.
  * Private static helpers:
  *   uint64_t nowMs(void) : monotonic clock, zero on clock failure.
+ *   bool queueText(SessionBridge *, const char *, const char *) : one-field frame.
  *   bool spawn(void *, const EngineProviderSlot *, const char *, size_t, uint64_t, void **) : queue JSON.
  *   HarnessStatus pollJob(void *, void *, uint64_t) : progress pipes, validate reply.
  *   void cancel(void *, void *) : clear pending IO, poison wire.
  * CONTRACT: trusted live pipes, valid owner address, serialized calls only.
  * Null/default safe, busy rejection preserves current turn; no arbitrary pointer
  * validation. Prompt is printable ASCII/newline/tab, response bytes are escaped
- * by the display. Local helper emits exactly {ok:boolean,text:string}; duplicate keys,
- * embedded NUL, trailing frames and excess fields reject. Error texts are generic
- * and never contain provider diagnostics/tokens. No history storage or secrets.
+ * by the display. Local helper emits exactly {ok:boolean,text:string} or
+ * {ask:{id,label}}; decisions emit {decision:string}. Duplicate keys, embedded
+ * NUL, trailing frames and excess fields reject. Error texts are generic and
+ * never contain provider diagnostics/tokens. No history storage or secrets.
  * ============================================================================ */
-;;INTENTION("derived wire identity/buffers mutate only through admission/poll/free; projections redact transcript buffers and summarize the borrowed Haven driver (which has no bounded projection), preserving privacy under the Conflict Triage Law")
+;;INTENTION("derived wire identity/buffers mutate only through admission/decide/poll/free; projections redact transcript buffers and summarize the borrowed Haven driver (which has no bounded projection), preserving privacy under the Conflict Triage Law")
 static uint64_t nowMs(void) {
     struct timespec stamp;
     if (clock_gettime(CLOCK_MONOTONIC, &stamp) != 0)
         return 0;
     return (uint64_t) stamp.tv_sec * 1000u + (uint64_t) stamp.tv_nsec / 1000000u;
+}
+;;WHAT("SessionBridge")
+static bool queueText(SessionBridge *self, const char *key, const char *value) {
+    JsonWriter writer;
+    JsonWriter_init(&writer, (*self).request, sizeof((*self).request) - 1);
+    Json_beginObject(&writer);
+    Json_addKey(&writer, key);
+    Json_stringVal(&writer, value);
+    Json_endObject(&writer);
+    if (!JsonWriter_ok(&writer))
+        return false;
+    (*self).requestLength = JsonWriter_used(&writer);
+    (*self).request[(*self).requestLength++] = '\n';
+    (*self).requestOffset = 0;
+    return true;
 }
 ;;WHAT("SessionBridge")
 static bool spawn(void *context, const EngineProviderSlot *engine, const char *prompt,
@@ -94,6 +128,8 @@ static bool spawn(void *context, const EngineProviderSlot *engine, const char *p
     (*self).responseLength = 0;
     (*self).startedMs = nowMs();
     (*self).text[0] = '\0';
+    (*self).awaiting = false;
+    (*self).decision[0] = '\0';
     *outHandle = self;
     return (*self).startedMs != 0;
 }
@@ -101,15 +137,21 @@ static bool spawn(void *context, const EngineProviderSlot *engine, const char *p
 static HarnessStatus pollJob(void *context, void *handle, uint64_t timeoutMs) {
     (void) handle;
     SessionBridge *self = context;
-    uint64_t now = nowMs();
-    if (!now || now < (*self).startedMs || now - (*self).startedMs >= timeoutMs)
+    if ((*self).failed)
         goto fail;
     if ((*self).requestOffset < (*self).requestLength) {
-        ssize_t n = write((*self).writeFd, (*self).request + (*self).requestOffset,
-                          (*self).requestLength - (*self).requestOffset);
-        if (n > 0)
-            (*self).requestOffset += (size_t) n;
-        else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+        ssize_t sent = write((*self).writeFd, (*self).request + (*self).requestOffset,
+                             (*self).requestLength - (*self).requestOffset);
+        if (sent > 0)
+            (*self).requestOffset += (size_t) sent;
+        else if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+            goto fail;
+    }
+    /* The human wait is not the model's budget: while an approval is displayed the
+     * deadline is suspended and SessionBridge_decide restarts it on submission. */
+    if (!(*self).awaiting) {
+        uint64_t now = nowMs();
+        if (!now || now < (*self).startedMs || now - (*self).startedMs >= timeoutMs)
             goto fail;
     }
     if ((*self).responseLength >= sizeof((*self).response) - 1)
@@ -139,6 +181,20 @@ static HarnessStatus pollJob(void *context, void *handle, uint64_t timeoutMs) {
     if (!Json_parse(&doc, nodes, 8, scratch, sizeof(scratch), (*self).response))
         goto fail;
     JsonRef root = Json_root(&doc);
+    JsonRef ask = Json_member(&doc, root, "ask");
+    if (Json_type(&doc, root) == JSON_OBJECT && Json_count(&doc, root) == 1 && Json_type(&doc, ask) == JSON_OBJECT) {
+        JsonRef identity = Json_member(&doc, ask, "id");
+        JsonRef label = Json_member(&doc, ask, "label");
+        if (Json_count(&doc, ask) != 2 || Json_type(&doc, identity) != JSON_STRING ||
+            Json_type(&doc, label) != JSON_STRING ||
+            !Json_getString(&doc, identity, (*self).approvalId, sizeof((*self).approvalId)) ||
+            !Json_getString(&doc, label, (*self).approvalLabel, sizeof((*self).approvalLabel)))
+            goto fail;
+        (*self).awaiting = true;
+        (*self).approvalSerial++;
+        (*self).responseLength = 0;
+        return HARNESS_STATUS_RUNNING;
+    }
     JsonRef success = Json_member(&doc, root, "ok");
     JsonRef text = Json_member(&doc, root, "text");
     if (Json_type(&doc, root) != JSON_OBJECT || Json_count(&doc, root) != 2 ||
@@ -153,6 +209,7 @@ static HarnessStatus pollJob(void *context, void *handle, uint64_t timeoutMs) {
     return HARNESS_STATUS_DONE;
 fail:
     (*self).failed = true;
+    (*self).awaiting = false;
     strcpy((*self).text, "OpenCode turn failed or timed out. Exit and relaunch; remote cancellation is best effort.");
     return HARNESS_STATUS_TIMEOUT;
 }
@@ -161,6 +218,7 @@ static void cancel(void *context, void *handle) {
     (void) handle;
     SessionBridge *self = context;
     (*self).failed = true;
+    (*self).awaiting = false;
     (*self).requestLength = 0;
 }
 SessionBridge SessionBridge_0(void) {
@@ -180,7 +238,8 @@ SessionBridge SessionBridge_2(int readFd, int writeFd) {
 }
 bool SessionBridge_submit(SessionBridge *self, const char *prompt) {
     if (!self || !prompt || !*prompt || (*self).readFd < 0 || (*self).writeFd < 0 ||
-        (*self).failed || (*self).jobId || strnlen(prompt, SESSION_REQUEST_CAP) >= SESSION_REQUEST_CAP / 2) {
+        (*self).failed || (*self).jobId || (*self).awaiting ||
+        strnlen(prompt, SESSION_REQUEST_CAP) >= SESSION_REQUEST_CAP / 2) {
         THROW("session turn rejected: empty, oversized, busy or unbound wire");
         return false;
     }
@@ -204,6 +263,7 @@ int SessionBridge_poll(SessionBridge *self) {
     if (status == HARNESS_STATUS_RUNNING)
         return 0;
     (*self).jobId = 0;
+    (*self).awaiting = false;
     return status == HARNESS_STATUS_DONE ? 1 : -1;
 }
 void SessionBridge_free(SessionBridge *self) {
@@ -212,6 +272,7 @@ void SessionBridge_free(SessionBridge *self) {
     if ((*self).jobId)
         Harness_cancel(&(*self).harness, (*self).jobId);
     (*self).jobId = 0;
+    (*self).awaiting = false;
 }
 void SessionBridge_setOwo(SessionBridge *self, bool enabled) {
     if (self)
@@ -219,6 +280,28 @@ void SessionBridge_setOwo(SessionBridge *self, bool enabled) {
 }
 bool SessionBridge_isOwo(const SessionBridge *self) { return self && (*self).owo; }
 bool SessionBridge_isBusy(const SessionBridge *self) { return self && (*self).jobId; }
+bool SessionBridge_isAwaiting(const SessionBridge *self) { return self && (*self).awaiting; }
+const char *SessionBridge_getApprovalLabel(const SessionBridge *self) { return self ? (*self).approvalLabel : ""; }
+uint32_t SessionBridge_getApprovalSerial(const SessionBridge *self) { return self ? (*self).approvalSerial : 0; }
+bool SessionBridge_decide(SessionBridge *self, const char *decision) {
+    if (!self || !decision || !(*self).jobId || (*self).failed || !(*self).awaiting ||
+        (*self).requestOffset != (*self).requestLength) {
+        THROW("session decision rejected: idle, not awaiting, unflushed or null");
+        return false;
+    }
+    if (strcmp(decision, "once") != 0 && strcmp(decision, "always") != 0 && strcmp(decision, "reject") != 0) {
+        THROW("session decision must be once, always or reject");
+        return false;
+    }
+    if (!queueText(self, "decision", decision)) {
+        THROW("session decision exceeds wire capacity");
+        return false;
+    }
+    strcpy((*self).decision, decision);
+    (*self).awaiting = false;
+    (*self).startedMs = nowMs();
+    return (*self).startedMs != 0;
+}
 bool SessionBridge_setTimeout(SessionBridge *self, uint64_t timeoutMs) {
     if (!self || !timeoutMs || timeoutMs > SESSION_TIMEOUT_MS_MAX || (*self).jobId) {
         THROW("session timeout rejected: null, busy or out of safety range");
@@ -236,7 +319,8 @@ bool SessionBridge_toString(const SessionBridge *self, char *dest, size_t cap, b
         *outTruncated = false;
     if (!dest || !cap)
         return false;
-    int n = snprintf(dest, cap, "%s", !self ? "nullptr" : SessionBridge_isBusy(self) ? "OpenCode pending" : "OpenCode idle");
+    int n = snprintf(dest, cap, "%s", !self ? "nullptr" : SessionBridge_isAwaiting(self) ? "OpenCode approval pending"
+                     : SessionBridge_isBusy(self) ? "OpenCode pending" : "OpenCode idle");
     bool cut = n < 0 || (size_t) n >= cap;
     if (outTruncated)
         *outTruncated = cut;
@@ -249,10 +333,11 @@ bool SessionBridge_toStringStruct(const SessionBridge *self, char *dest, size_t 
         *outTruncated = false;
     if (!dest || !cap)
         return false;
-    int n = snprintf(dest, cap, "{harness:borrowed-driver,readFd:%d,writeFd:%d,owo:%d,jobId:%u,startedMs:%llu,request:redacted,requestLength:%zu,requestOffset:%zu,response:redacted,responseLength:%zu,text:redacted,failed:%d}",
+    int n = snprintf(dest, cap, "{harness:borrowed-driver,readFd:%d,writeFd:%d,owo:%d,jobId:%u,startedMs:%llu,request:redacted,requestLength:%zu,requestOffset:%zu,response:redacted,responseLength:%zu,text:redacted,failed:%d,awaiting:%d,approvalSerial:%u,approvalId:redacted,approvalLabel:redacted,decision:redacted}",
                      (*self).readFd, (*self).writeFd, (*self).owo, (*self).jobId,
                      (unsigned long long) (*self).startedMs, (*self).requestLength,
-                     (*self).requestOffset, (*self).responseLength, (*self).failed);
+                     (*self).requestOffset, (*self).responseLength, (*self).failed,
+                     (*self).awaiting, (*self).approvalSerial);
     bool cut = n < 0 || (size_t) n >= cap;
     if (outTruncated)
         *outTruncated = cut;
