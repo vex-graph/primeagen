@@ -49,6 +49,7 @@
  *     Draw per-cell styled wrapped viewport, fixed input/status and cursor.
  *     No model-supplied terminal escape sequences; unsupported italic uses underline.
  *   static int command(Tui *, bool) : local slash dispatch; connect/quit actions.
+ *   static const char *approvalReply(int key) : once/always/reject key mapping.
  *   static int connectHost(const char *, bool) : exec existing adapter on Go Flash.
  * Entry:
  *   int main(int argc, char **argv)
@@ -67,16 +68,22 @@
  *   Ctrl-L clear, Tab focus, Enter send, Backspace, Ctrl-Q quit. Resize recalculates all
  *   bounds. Input is printable ASCII; transcript controls are escaped by Tui.
  *   Default is disconnected. /connect explicitly starts the existing Python host
- *   using OpenCode login; no pasted keys, approval calls or tool execution.
+ *   using OpenCode login; no pasted keys or tool execution happens here.
+ *   The connected session runs under the host's default policy: inspection is
+ *   automatic, while edits, shell, web fetch/search, external directories and
+ *   `.env` reads wait for an explicit [o]nce/[a]lways/[r]eject decision typed in
+ *   this terminal. The native adapter only forwards that decision; OpenCode
+ *   enforces the rule and owns any saved project approval.
  *   Session host owns external IO; native
- *   bridge consumes Haven jobs without blocking. Busy Enter preserves input;
+ *   bridge consumes Haven jobs without blocking. Busy Enter preserves input, and
+ *   while an approval is pending only the decision keys are accepted.
  *   Clear changes display only, not remote history. getch uses 100ms slices. Screen
  *   calls are host terminal IO, not a realtime/bounded-join guarantee. Normal
  *   exits/SIGINT/SIGTERM restore mode; SIGKILL/crashes cannot promise restoration.
  *   HotModule owns reloadable Primeagen_draw/Primeagen_command code. Tui, bridge,
  *   permission/session host and screen remain resident. /update pauses new turns,
  *   finishes the existing turn, synchronously resolves, then resumes; rollback
- *   recovery-required stops rather than falsely resuming. No remote update/tools.
+ *   recovery-required stops rather than falsely resuming. No remote update.
  * ============================================================================
  */
 #define TUI_POLL_MS 100 /* Shutdown checks between idle terminal reads. */
@@ -98,6 +105,17 @@ static void stop(int signalNumber) {
 /* Slash input is local; unimplemented commands are never model prompts. */
 static int command(Tui *state, bool sessionMode) {
     return Primeagen_command(state, sessionMode);
+}
+
+/* One pending question at a time: o/y approve once, a always, r/n reject. */
+static const char *approvalReply(int key) {
+    if (key == 'o' || key == 'y')
+        return "once";
+    if (key == 'a')
+        return "always";
+    if (key == 'r' || key == 'n')
+        return "reject";
+    return nullptr;
 }
 
 /* Terminal must be restored first. Never transfer keys or copy auth files. */
@@ -161,7 +179,7 @@ int main(int argc, char **argv) {
                 writeFd = (int) value;
         }
         else if (strcmp(argv[i], "--help") == 0) {
-            puts("primeagen tui [--owo] [--list-width CELLS] [--select-text]: offline three-column browser; Ctrl-T toggles native text selection; Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode; /connect uses existing login; Ctrl-Q exits");
+            puts("primeagen tui [--owo] [--list-width CELLS] [--select-text]: offline three-column browser; Ctrl-T toggles native text selection; Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode; /connect uses existing login; approvals use o/a/r; Ctrl-Q exits");
             return 0;
         } else {
             THROW("unknown TUI argument");
@@ -218,7 +236,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (sessionMode) {
-        const char *notice = "OpenCode session | tools denied | Enter sends | Clear is display-only | Ctrl-Q exits";
+        const char *notice = "OpenCode session | read/glob/grep auto | edit/shell/web ask: [o]nce [a]lways [r]eject | Ctrl-Q exits";
         if (!Tui_add(&state, notice, strlen(notice))) {
             HotShutdown(hot);
             Tui_free(&state);
@@ -267,6 +285,7 @@ int main(int argc, char **argv) {
     bool focused = true;
     bool sessionFailed = false;
     bool updateRequested = false;
+    uint32_t shownApproval = 0;
     while (ok && !stopped) {
         int completed = SessionBridge_poll(&bridge);
         if (completed) {
@@ -276,6 +295,15 @@ int main(int argc, char **argv) {
             ok = Tui_addStyled(&state, label, strlen(label), role | TEXT_STYLE_BOLD, false) &&
                  Tui_addStyled(&state, text, strlen(text), 0, completed > 0);
             sessionFailed = completed < 0;
+            shownApproval = 0;
+        }
+        if (SessionBridge_isAwaiting(&bridge) && SessionBridge_getApprovalSerial(&bridge) != shownApproval) {
+            shownApproval = SessionBridge_getApprovalSerial(&bridge);
+            char question[SESSION_APPROVAL_LABEL_CAP + 96];
+            snprintf(question, sizeof(question), "Approve %s?  [o]nce  [a]lways  [r]eject",
+                     SessionBridge_getApprovalLabel(&bridge));
+            ok = Tui_addStyled(&state, question, strlen(question), TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false);
+            Tui_setDirty(&state, true);
         }
         if (updateRequested && !SessionBridge_isBusy(&bridge)) {
             uint64_t before = Hot_get_generation(hot);
@@ -346,6 +374,20 @@ int main(int argc, char **argv) {
         else if (key == TUI_CTRL_T) {
             selectText = !selectText;
             mousemask(selectText ? 0 : mask, nullptr);
+            Tui_setDirty(&state, true);
+        }
+        else if (SessionBridge_isAwaiting(&bridge)) {
+            // One pending question at a time: only o/y, a and r/n answer it.
+            const char *reply = approvalReply(key);
+            if (selection != 0 || reply == nullptr)
+                continue; // unrecognized key leaves the pending question untouched
+            if (!SessionBridge_decide(&bridge, reply))
+                ok = false;
+            else {
+                char notice[128];
+                snprintf(notice, sizeof(notice), "Decision sent: %s.", reply);
+                ok = Tui_add(&state, notice, strlen(notice));
+            }
             Tui_setDirty(&state, true);
         }
         else if (key == 16 || key == 19 || key == 15) {
