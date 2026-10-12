@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 #include "cli/view.h"
+#include "tui/utf8.h"
 #include "hot/hot.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -24,6 +25,9 @@
  *       emits display notices/actions, never executes model/provider/tools.
  * PRIVATE: attributes(style) : host-defined visible style to ncurses attributes.
  *   drawRegion(...) : legacy/full-width or right-pane paint with fixed input.
+ *     Whole UTF-8 scalars use wide ncurses cells and wcwidth; combining marks
+ *     group up to CCHARW_MAX. Unsupported locale glyphs use '?'. Not full Unicode
+ *     grapheme/emoji-ZWJ shaping; terminal font/width agreement remains external.
  *   symbol(y, glyph, fallback, selected) : one-cell monochrome rail glyph.
  * PUBLIC PANEL SURFACE:
  *   int Primeagen_chatLeft(int columns, int listWidth) : adaptive chat origin.
@@ -123,8 +127,31 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     for (size_t i = 0; selection == 0 && i < height && first + i < total; ++i) {
         if (!Tui_copyStyledRow(state, first + i, row, styles, cap, nullptr))
             return false;
-        for (size_t j = 0; row[j] != '\0'; ++j)
-            mvaddch((int) i + 2, left + (int) j + 1, (chtype) (unsigned char) row[j] | attributes(styles[j]));
+        size_t length = strlen(row), cells = 0;
+        for (size_t at = 0; at < length;) {
+            uint32_t scalar;
+            size_t bytes = TuiUtf8_decode(row + at, length - at, &scalar);
+            if (bytes == 0)
+                return false;
+            wchar_t text[CCHARW_MAX] = {0};
+            text[0] = wcwidth((wchar_t) scalar) < 0 ? L'?' : (wchar_t) scalar;
+            size_t next = at + bytes, count = 1;
+            while (next < length && count < CCHARW_MAX - 1) {
+                uint32_t mark;
+                size_t markBytes = TuiUtf8_decode(row + next, length - next, &mark);
+                if (markBytes == 0 || wcwidth((wchar_t) mark) != 0)
+                    break;
+                text[count++] = (wchar_t) mark;
+                next += markBytes;
+            }
+            cchar_t glyph;
+            chtype style = attributes(styles[at]);
+            if (setcchar(&glyph, text, (attr_t) (style & ~A_COLOR), (short) PAIR_NUMBER(style), nullptr) != OK)
+                return false;
+            mvadd_wch((int) i + 2, left + (int) cells + 1, &glyph);
+            cells += TuiUtf8_width(scalar);
+            at = next;
+        }
     }
     if (selection != 0) {
         const char *names[] = {"OpenCode", "Sola (@sola6sol)", "WhateverName (@whatever)", "Ecosystem / #channel1", "Ecosystem / #channel2", "Ecosystem / #channel3"};
