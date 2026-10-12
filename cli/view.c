@@ -161,7 +161,7 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     }
     mvhline(rows - 4, left, ACS_HLINE, columns);
     attron(COLOR_PAIR(VIEW_STATUS) | A_DIM);
-    mvaddnstr(rows - 3, left + 1, sessionMode ? "Ctrl-T select text | scroll: wheel/PgUp-PgDn/arrows | /help | /update | Ctrl-Q quit" : "/connect (click here) | Ctrl-T select | /help | Ctrl-Q quit", columns - 2);
+    mvaddnstr(rows - 3, left + 1, sessionMode ? "Ctrl-T select text | scroll: wheel/Up-Down | /help | /update | Ctrl-Q quit" : "/connect (click here) | Ctrl-T select | /help | Ctrl-Q quit", columns - 2);
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
     attron(COLOR_PAIR(VIEW_INPUT) | A_BOLD);
     mvaddstr(rows - 2, left, "> ");
