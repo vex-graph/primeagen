@@ -9,7 +9,9 @@ builders. Func is invoked as an independent compile-time tool, never embedded.
 
 Implemented: explicit OpenAI-compatible, Anthropic and loopback-local model
 configuration; a strict JSON-text answer/tool loop; interactive approval for every
-read/build/run; workspace-confined reads; real Func compilation and separately
+tool action; native C23 workspace-confined read/list/create/write/edit/delete,
+explicitly approved unsandboxed Bash, configured search-program delegation;
+real Func compilation and separately
 approved artifact execution. That original `chat` mode uses our own agent loop.
 Optional `session` mode now uses OpenCode V2 as the agent engine through API
 Haven's actual EngineProvider/Harness job callbacks. Its login/model configuration
@@ -78,6 +80,7 @@ From this checkout:
 
 ```sh
 python3 build.py
+sh tools/build.sh
 ./primeagen doctor
 ./primeagen chat --provider openai --model YOUR_MODEL
 ./primeagen chat --provider anthropic --model YOUR_MODEL
@@ -134,18 +137,27 @@ sh cli/build.sh
 
 Enter sends a turn and may consume your subscription/quota. A new dedicated session
 is created only on the first Enter; never attach to the current coding session.
-Every session requests deny-all tool permissions and checks the echoed rules before
-each prompt. No permission approval calls are made; this is **chat-only**, not an
-editing agent. Trusted server/configuration/plugins are required: echoed rules
-and fake tests do not prove live server policy enforcement or sandboxing.
+Every session requests the default policy and checks the echoed rules before each
+turn: **inspection is automatic** (read/glob/grep), while **edits, shell, web
+fetch/search, external directories and `.env` reads ask first** and everything else
+is denied. When a request arrives the transcript shows
+`Approve <action>: <resource>?  [o]nce  [a]lways  [r]eject`; only those keys are
+accepted while it is pending. The local adapter forwards your decision and owns no
+rule itself — OpenCode enforces it and owns any saved "always" approval, so a
+configured deny always wins. Approvals cannot be granted by the model, and a
+pending question never expires the model deadline. Trusted server/configuration/
+plugins are required: echoed rules and fake tests do not prove live server policy
+enforcement or sandboxing. Only one bounded request is shown at a time.
 OwO instructions come from the same canonical C function, not a copied Python prompt.
 Input remains available while a turn runs; Enter while busy preserves it. Final
-answers arrive after completion; Clear/Ctrl-L changes the display only, not history.
+answers arrive after completion; tool activity is reported as a `used <tool>` line
+rather than executed locally. Clear/Ctrl-L changes the display only, not history.
 Ctrl-Q closes the local worker and attempts remote interruption; interruption is
 best effort, so remote work may outlive exit. Remote history remains on OpenCode.
 Failures poison the bridge: exit/relaunch rather than attribute a late reply to a
-new prompt. Per-turn bounds are 120 seconds, 16 KiB request framing, 64 KiB response
-framing and 100 newest remote messages. Exhaustion fails explicitly, never silently
+new prompt. Per-turn bounds are 120 seconds of model time (excluding your decision),
+16 KiB request framing, 64 KiB response framing and 100 newest remote messages.
+Exhaustion fails explicitly, never silently
 truncates. Broader provider/subscription coverage, appearance, full launcher PTY lifecycle and
 macOS 14 runtime evidence remain gaps. **Codex App Server is not implemented yet.**
 
@@ -219,11 +231,65 @@ to message content; vendor system-role priority and live model compliance are
 not proven. The offline TUI also identifies the selected mode in greeting/status,
 but does not contact a model.
 
+## Native tools and JSON tags
+
+Build explicitly with `sh tools/build.sh`. Native actions live in
+`tools/read.{c,h}`, `list`, `create`, `write`, `edit`, `delete`, `bash` and
+`websearch`, with shared `fs` admission and a private `main.c` dispatcher.
+The existing `primeagen chat --provider ... --model ...` agent requests one action
+at a time using strict JSON, for example:
+
+```json
+{"tool":"read","arguments":{"path":"src/main.c"}}
+{"tool":"list","arguments":{"path":"."}}
+{"tool":"create","arguments":{"path":"new.txt","text":"new content"}}
+{"tool":"write","arguments":{"path":"existing.txt","text":"replacement"}}
+{"tool":"edit","arguments":{"path":"existing.txt","old":"unique text","new":"replacement"}}
+{"tool":"delete","arguments":{"path":"file.txt"}}
+{"tool":"bash","arguments":{"command":"git status --short"}}
+{"tool":"websearch","arguments":{"query":"C23 documentation"}}
+```
+
+Every action requires a separate host/user approval, including read/list; unknown
+tags, extra keys and model-provided approval fields reject. Python remains the
+consent/provider/bounded-child host; actual file actions and exec delegation are C.
+Denial spawns no child and mutates nothing. Results/errors return to the existing
+agent loop; completed side effects are not undone when a later step fails.
+
+File paths are relative to `--workspace`. Parents must exist; no traversal,
+symlink or regular-file hardlink aliases. Create never overwrites, write replaces
+an existing regular file, edit needs exactly one nonempty exact match, delete
+removes one regular file without recursion or undo. Replacement changes inode
+and preserves permission bits, not xattrs/ACLs/ownership metadata. Byte bounds
+reject rather than silently truncate; `--tool-byte-cap` chooses the host budget.
+Stable trusted tree required: this is not a racing-writer sandbox or crash-durable
+transaction. Killing during staging can leave a private `.primeagen-*` file.
+
+**Bash is unsandboxed**: approved commands inherit host environment/privileges,
+can escape the workspace, access secrets, write/delete files and contact networks.
+The host applies whole-child deadlines, bounded pipes and group cancellation/reap.
+A refused group cleanup is reported and remains unresolved; it is not proof that
+descendants stopped. Detached malicious processes remain outside the contract.
+
+Websearch requires `--websearch-tool /absolute/path/to/trusted-search-program`.
+That program receives the query as one literal argument and must use authorized
+provider APIs. No default scraper, guessed provider or implicit installation is
+provided; fake executable tests prove delegation only, not live search quality.
+
+Registered mirrored `tests/primeagen/tools/*_test.py` owners compile/run strict C23
+and ASan/UBSan tools; the shared fs C client and tagged-agent/consent owners use
+disposable storage. Allocation/OS failure injection, full leak accounting, crash
+recovery, hostile writers and other-platform proof remain gaps. The connected
+OpenCode session is also no longer deny-all: it runs the remote default policy and
+approval bridge described above, which is OpenCode's enforcement, not these C
+adapters. Those local adapters stay on the explicit `chat` path and are not
+reachable from the session.
+
 ## Scope and Limitations
 
 - First model protocol is strict JSON **text**, not native structured tool calls;
   providers/models that do not follow it reject. No streaming, retries, native
-  MCP, editing tools, multi-agent routing or GUI yet. Only optional OpenCode mode
+  MCP, multi-agent routing or GUI yet. Only optional OpenCode mode
   retains remote sessions; our prototype `chat` has no durable session storage.
 - Local means an OpenAI-compatible loopback server, not an embedded model or
   native Ollama protocol. Hosted transport verifies HTTPS and refuses redirects.
@@ -240,7 +306,7 @@ but does not contact a model.
   session routing, server membership, persistent channel histories or role/tool
   enforcement. Example entries are visibly labelled previews and make no calls.
 - Updates reload only `cli/view.c` rendering/command exports. Host, Tui layouts,
-  provider adapters, roles and tools require separate implementation/restart.
+   provider adapters, roles and tool integration require separate implementation/restart.
   SHA256 references come from the trusted local builder, not model output.
   Constructors/native modules are trusted, not sandboxed. Complete-set checks and
   detected rollback are tested; crash/power-loss recovery, signatures, hostile
