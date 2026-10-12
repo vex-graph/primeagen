@@ -9,8 +9,9 @@ OWNED STATE:
   model state, history, remote execution and any saved project approval. No
   credential files or .env are read here.
 FUNCTION REGISTRY:
-  api(method, path, body, timeout, empty) : bounded literal OpenCode CLI API
-      invocation; reject diagnostics, malformed/oversized/deep/duplicate JSON.
+   api(method, path, body, timeout, empty) : bounded literal OpenCode CLI API
+       invocation pinned to cwd Location; reject malformed/oversized/deep/duplicate
+       JSON. Message reads may explicitly tolerate bounded stderr noise.
   checked_id(value) : validate remote session ID before embedding in a path.
   checked_request(value) : validate remote permission-request ID before use.
   matches(pattern, value) : whole-value wildcard comparison used by policy eval.
@@ -19,7 +20,8 @@ FUNCTION REGISTRY:
   create(model) : create the dedicated session under the default policy.
   inspect(session) : confirm the enforced permission ruleset is unchanged.
   request(session) : first pending permission request, bounded and validated.
-  label(item) : bounded printable display text for one request.
+   label(item) : bounded printable display text for one request.
+   approvalNotes(item) : complete bounded resource list before the decision label.
   decide(session, target, decision) : reply once/always/reject to one request.
   begin(session, prompt, instructions) : admit one prompt under a turn deadline.
   collect(item, answers, tools) : project one assistant message, bounded.
@@ -77,6 +79,7 @@ import subprocess
 import sys
 import time
 import uuid
+from urllib.parse import quote
 
 from json_input import loads
 from process import run
@@ -126,7 +129,11 @@ SESSION_PERMISSIONS = [
 
 def api(method, path, body=None, timeout=10.0, empty=False, cap=WIRE_CAP, allowStderr=False):
     """Use official CLI discovery/auth, never inspect its token store."""
-    argv = ["opencode", "api", method, path]
+    # CLI discovery otherwise uses its own Location (which can differ from cwd).
+    # Permissions are Location-scoped in the server, so every request must use
+    # the same explicit Location as the dedicated session and its tool execution.
+    argv = ["opencode", "api", method, path, "--header",
+            "x-opencode-directory:" + quote(str(Path.cwd()), safe="")]
     if body is not None:
         argv += ["--data", json.dumps(body, ensure_ascii=True, separators=(",", ":"))]
     raw = run(argv, timeout=timeout, cap=cap, allowStderr=allowStderr)
@@ -164,10 +171,9 @@ def effective(rules, action, resource="*"):
 def confirmed(echo):
     """Refuse to run unless the server reports the policy we asked for.
 
-    The echoed ruleset is evaluated exactly as OpenCode evaluates it, so a server
-    that reorders, drops or extends the session policy into something more
-    permissive is rejected before any prompt is sent. Extra rules are tolerated
-    while the effective effects still match; a mismatched effect is not.
+    Require the exact ordered dedicated-session rules, not a handful of sampled
+    effects: a command-specific allow could otherwise bypass the shell ask rule.
+    This still does not prove plugin behavior or saved project approvals.
     """
     if not isinstance(echo, list) or not echo or len(echo) > 64:
         return False
@@ -181,7 +187,7 @@ def confirmed(echo):
     for action, expected in EXPECTED_EFFECTS.items():
         if effective(echo, action) != expected:
             return False
-    return effective(echo, "read", "secrets/nested.env") == "ask"
+    return echo == SESSION_PERMISSIONS
 
 
 def checked_request(value):
@@ -237,9 +243,23 @@ def request(session):
 
 def label(item):
     """One bounded line of printable text; remote content never reaches the screen raw."""
-    text = item["action"] + ": " + ", ".join(item["resources"])
+    action = "this Bash script" if item["action"] == "shell" else item["action"]
+    text = action + ": " + ", ".join(item["resources"])
     safe = "".join(character if 32 <= ord(character) < 127 else " " for character in text)
-    return safe[:LABEL_CAP]
+    return safe if len(safe) <= LABEL_CAP else safe[:LABEL_CAP - 3] + "..."
+
+
+def approvalNotes(item):
+    """Show every admitted permission resource, not a silently clipped command.
+
+    These are the server scanner's resources, not a claim that they are the full
+    original shell source. Each is capped at admission; all chunks are shown.
+    """
+    notes = ["Bash approval requested:" if item["action"] == "shell" else "Permission requested:"]
+    for resource in item["resources"]:
+        safe = "".join(character if 32 <= ord(character) < 127 else " " for character in resource)
+        notes.extend("  " + safe[at:at + NOTE_CAP - 2] for at in range(0, len(safe), NOTE_CAP - 2))
+    return notes
 
 
 def decide(session, target, decision):
@@ -252,6 +272,7 @@ def decide(session, target, decision):
 
 def begin(session, prompt, instructions):
     """Admit one prompt; the unique message ID is this turn's exact boundary."""
+    inspect(session)
     message_id = "msg_" + uuid.uuid4().hex
     api("post", "/api/session/" + session + "/prompt", {"id": message_id, "text": instructions + prompt})
     return {"messageId": message_id, "deadline": time.monotonic() + TURN_TIMEOUT,
@@ -523,6 +544,8 @@ def worker(model):
                 emit({"note": line})
             if ask is not None:
                 turn["awaitingSince"] = time.monotonic()
+                for line in approvalNotes(ask):
+                    emit({"note": line})
                 emit({"ask": {"id": ask["id"], "label": label(ask)}})
             if done is not None:
                 emit({"ok": True, "text": done})
