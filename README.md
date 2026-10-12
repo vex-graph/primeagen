@@ -142,15 +142,26 @@ is created only on the first Enter; never attach to the current coding session.
 Every session requests the default policy and checks the echoed rules before each
 turn: **inspection is automatic** (read/glob/grep), while **edits, shell, web
 fetch/search, external directories and `.env` reads ask first** and everything else
-is denied. When a request arrives the transcript shows
-`Approve <action>: <resource>?  [o]nce  [a]lways  [r]eject`; only those keys are
-accepted while it is pending. The local adapter forwards your decision and owns no
+is denied. Every API call pins `x-opencode-directory` to the caller's working
+directory rather than the CLI's potentially different default Location. This
+corrects routing but does **not** establish reliable approval enforcement: the
+live consent owner still observed completed Bash with no pending request reaching
+Primeagen. Do not rely on this experimental session mode to gate execution yet.
+When a request
+arrives, all admitted scanner resources are shown, followed by
+`Do you accept this Bash script: …?  [y] Yes  [a] Always yes  [n] No`.
+A fixed decision bar stays visible while you scroll to inspect the request;
+the live chat/tail is selected automatically. Legacy [o]nce/[r]eject keys also work.
+Draft editing/sending pauses until you decide. The local adapter forwards your decision and owns no
 rule itself — OpenCode enforces it and owns any saved "always" approval, so a
 configured deny always wins. Approvals cannot be granted by the model, and a
 pending question never expires the model deadline; requests are polled for the
 whole turn, so one raised mid-turn appears as soon as it happens. Trusted
 server/configuration/plugins are required: echoed rules and fake tests do not
-prove live server policy enforcement or sandboxing. Only one bounded request is
+prove general live server policy enforcement or sandboxing. The opt-in real Go
+shell-consent owner is currently failing; one earlier successful ask/reject was
+not repeatable and is not acceptance evidence. Saved approval behavior is unproved.
+Only one bounded request is
 shown at a time.
 
 **The turn is a stream, not one lump.** Sending shows your prompt, then the turn
@@ -187,15 +198,14 @@ moves down as output arrives and disappears when the turn ends. All of it is
 bounded display text — never commands, never re-executed here; syntax coloring
 stays the language layer's job.
 
-**Scrolling.** The transcript scrolls with the wheel, **Up/Down** (one row),
-**PgUp/PgDn** (one page) and **End** (jump to the tail), whatever the list
-selection is; the footer names them. One honest limitation: this macOS ncurses is
-`NCURSES_MOUSE_VERSION 1`, whose fifth 6-bit slot holds the ctrl/shift/alt
-modifier bits rather than a fifth button — so there is no `BUTTON5_PRESSED` for
-the terminal to deliver and **wheel-down cannot be expressed in this ABI**. Wheel-up
-works; Primeagen also probes the reused slot directly and accepts it as wheel-down
-only when no real button is involved, so a shift-click never scrolls. The keyboard
-path is the guaranteed one; a GUI would not have this limitation.
+**Scrolling.** The transcript scrolls up/down with the mouse/trackpad and
+**Up/Down** arrows (one row), with **End** to return to the tail, whatever the list
+selection is; the footer names them. The terminal now decodes **SGR mouse reports**
+directly, with X10 fallback, instead of passing wheel-down through Apple's old
+ncurses mouse ABI. Wheel codes 64/65 are distinct from shift-click. A real PTY
+owner sends both directions through the production terminal and checks that the
+viewport returns to newer history; Ctrl-T disables capture for terminal selection.
+Physical mouse/trackpad behavior and appearance still need user acceptance.
 
 OwO instructions come from the same canonical C function, not a copied Python prompt.
 Input remains available while a turn runs; Enter while busy preserves it. Final

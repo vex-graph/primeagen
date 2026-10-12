@@ -93,13 +93,21 @@ terminal appends them under one per-turn speaker label and keeps a live trailing
 `working...` placeholder that is popped before any real output. Notes are bounded
 display text derived from remote content (a `-`/`+` diff list for edits), never
 commands and never a local re-execution; coloring stays the language layer's job.
-Transcript scrolling is wheel-up, Up/Down one row, PgUp/PgDn one page and End to
-tail, and is available whatever the list selection. Wheel-down is not expressible
-in this platform's ncurses ABI (`NCURSES_MOUSE_VERSION 1` spends the fifth 6-bit
-slot on the ctrl/shift/alt modifiers instead of a fifth button, so no
-`BUTTON5_PRESSED` exists to register); Primeagen probes the reused slot directly
-and accepts it only when no real button bit is present, so a shift-click never
-scrolls. The keyboard path is the guaranteed one.
+Transcript scrolling is wheel-up/down, Up/Down one row and
+End to tail, available whatever the list selection. The terminal owns bounded
+SGR/X10 mouse decoding through ncurses prefix keys, never the v1 MEVENT fifth-slot
+modifier alias. Capture is explicitly disabled for Ctrl-T and normal shutdown.
+The production-process PTY owner proves both directions; physical mouse/trackpad
+behavior and appearance remain user acceptance, not inferred from that owner.
+Every official API invocation pins x-opencode-directory to the same caller cwd
+Location as the created chat. Session policy echo alone did not prove Location
+alignment or reliable approval enforcement: the live Go consent owner still
+observed completed Bash without a pending request reaching this host. One prior
+ask/reject success was not repeatable; the connected consent gate remains unresolved.
+Approval selects the live chat/tail, shows all admitted scanner resources and a
+fixed Yes/Always yes/No decision bar; scroll inspection remains available while
+draft editing/sending pauses. Scanner resources are not full original shell source.
+General tool enforcement and saved-always behavior remain unproved.
 Timing is an idle watchdog, not a total budget. The Python host restarts its
 window whenever the newest remote message changes and the bridge restarts its own
 on every consumed frame, so a multi-tool turn is bounded by remote silence rather
