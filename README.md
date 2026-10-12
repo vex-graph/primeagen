@@ -33,7 +33,9 @@ that restores the terminal and launches the existing OpenCode session host on
 silently appended as a pretend answer. The frontend is C; this handoff still uses
 the Python host and is not completion of the native-runtime migration.
 Explicit `session` connects this same terminal to a dedicated OpenCode chat session,
-with retained server history and final answers (not streaming). Automated fake
+with retained server history and a turn whose progress streams as it happens (model
+prose, `thinking:` reasoning and tool activity appear while the turn runs; token-by-token
+streaming of an in-flight completion is not offered). Automated fake
 CLI/pipe owners prove local wiring, not live Go entitlement or permission enforcement.
 
 Explicit `/update` now reloads native terminal rendering and local command code
@@ -233,10 +235,14 @@ configured, connect **OpenCode Go** using OpenCode's own `/connect` first.
 Primeagen does not accept/store an API key here. The handoff starts a fresh
 terminal view; disconnected drafts are not transferred. `/help`, `/clear`
 (display only), `/update`, and `/quit` are local commands; unsupported slash commands are
-reported locally, never sent to the model. `/settings`, real server/channel session routing,
-streaming, Zen key entry and agent tool approval are not implemented.
+reported locally, never sent to the model. `/settings`, real server/channel session
+routing, token-delta streaming and Zen key entry are not implemented. Tool approval
+does exist: the connected session runs the default policy above and asks in the
+transcript before edits, shell and network actions.
 
-Wheel/PgUp/PgDn scroll the transcript; End returns to the tail. Click the input
+Wheel-up, PgUp/PgDn, Up/Down and End scroll the transcript; PgUp/PgDn page and
+End returns to the tail. Wheel-down is not deliverable in this platform's ncurses
+(see the scrolling note above). Click the input
 line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter
 sends only after connection; disconnected input makes no model/tool call.
 Mouse reporting depends on the terminal.
@@ -336,9 +342,10 @@ reachable from the session.
 ## Scope and Limitations
 
 - First model protocol is strict JSON **text**, not native structured tool calls;
-  providers/models that do not follow it reject. No streaming, retries, native
-  MCP, multi-agent routing or GUI yet. Only optional OpenCode mode
-  retains remote sessions; our prototype `chat` has no durable session storage.
+  providers/models that do not follow it reject. Our own `chat` loop has no
+  streaming, retries, native MCP, multi-agent routing or GUI. Only optional
+  OpenCode mode retains remote sessions and streams a turn's progress; our
+  prototype `chat` has no durable session storage and no token-delta streaming.
 - Local means an OpenAI-compatible loopback server, not an embedded model or
   native Ollama protocol. Hosted transport verifies HTTPS and refuses redirects.
 - The Python host transport is an explicit standalone consumer adapter. API Haven
