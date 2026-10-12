@@ -305,20 +305,23 @@ int main(int argc, char **argv) {
         Tui_getSize(&state, &oldRows, &oldColumns);
         if (oldRows != rows || oldColumns != chatColumns)
             ok = Tui_setSize(&state, rows, chatColumns);
-        if ((size_t) columns + 1 > capacity) {
-            char *next = realloc(row, (size_t) columns + 1);
+        size_t needed = Tui_getRowCapacity(&state);
+        if ((size_t) columns + 1 > needed)
+            needed = (size_t) columns + 1;
+        if (needed > capacity) {
+            char *next = realloc(row, needed);
             if (next == nullptr) {
                 ok = false;
                 break;
             }
             row = next;
-            uint8_t *nextStyles = realloc(styles, (size_t) columns + 1);
+            uint8_t *nextStyles = realloc(styles, needed);
             if (nextStyles == nullptr) {
                 ok = false;
                 break;
             }
             styles = nextStyles;
-            capacity = (size_t) columns + 1;
+            capacity = needed;
         }
         if (ok && Tui_isDirty(&state)) {
             if (selectText) {
