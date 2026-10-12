@@ -32,12 +32,25 @@ The launcher defaults to this disconnected frontend. Its local `/connect` restor
 the terminal before invoking the existing Python session host on the expressly
 selected Go Flash model, reusing OpenCode login. No key entry/auth copying or
 tool approvals are added. Unsupported slash commands stay local. This is a
-transitional connected frontend, not a completed C runtime or server/channel UI.
+transitional connected frontend, not a completed C runtime or server/channel runtime.
 Personality `personality/owo.c` owns canonical AI speech-style instructions, never
 consent or tool policy. Explicit chat --owo selects native prompt injection;
 offline TUI greeting/status only reflect that mode. Prompt guidance is not model
 compliance or vendor system-role proof. Vexspoke's actual JSON string writer is consumed, not duplicated.
 Display buffers use cold growable C storage; no realtime/backend-trust claim.
+The terminal navigation is a three-column rail/list/chat presentation. Connected
+line-bordered text-symbol buttons select People or Servers; the middle panel
+lists entries or a selected server's channels. Actual configured OpenCode chat
+remains separate from explicit offline example people/channel previews. Previews
+never send or display that chat's draft/history. New navigation is passed by
+value to a new view export; the legacy draw ABI and resident Tui layout remain
+unchanged. This does not implement model registries, channel routing or roles.
+Ctrl-T/--select-text hands drag selection back to the terminal by disabling mouse
+reporting and temporarily painting the actual chat full-width, without navigation
+text mixed into multiline selections. Terminal owns highlighting/copy; no clipboard
+mutation, application selection buffer or physical terminal proof is implied.
+The explicit install-command.sh links the real shell launcher into a per-user
+bin directory, preserving unrelated commands, shell config and caller cwd.
 Terminal Markdown is a Primeagen presentation adapter, not a guessed Vexspoke API.
 Tui sanitizes controls before parsing and owns parallel visible-byte style flags;
 ncurses maps only host-defined flags, never model ANSI. Formatting precedes wrap,
