@@ -1,4 +1,10 @@
-"""Optional OpenCode V2 session host for the native Primeagen terminal.
+"""OpenCode V2 CLI adapter and native terminal launcher.
+
+The public terminal launcher now selects controlled_session.worker: OpenCode
+generates text only, while Primeagen's existing native Tools dispatcher gates
+execution locally. The remote create/begin/advance/worker functions below remain
+legacy diagnostic owners, NOT the default terminal execution path. Their remote
+consent test still fails; no reliable remote execution gate is claimed.
 
 ============================================================================
 MODULE: Primeagen OpenCode host (src/session_host.py)
@@ -43,11 +49,12 @@ FUNCTION REGISTRY:
       and generic failures. UTF-16 JSON escapes are decoded by Python, then emitted
       as scalar UTF-8; no surrogate halves cross the native parser/display boundary.
   terminate(signum, frame) : raise cancellation so bounded child cleanup executes.
-  launch(owo, model) : pass nonblocking wire fds to the native TUI; the terminal
+   launch(owo, model) : start the host-controlled text-generation worker and pass
+       nonblocking wire fds to the native TUI; the terminal
       owns display; on every exit terminate/kill/reap worker, close pipes.
   main() : explicit --engine opencode, optional provider/model, --owo or private
       --worker entry. Nonterminal launch rejects before starting any worker.
-CONTRACT:
+LEGACY REMOTE ADAPTER CONTRACT (not public terminal default):
   Trusted installed OpenCode V2 executable/server; subscriptions remain with its
   login. Model is explicit provider/id when selected, otherwise OpenCode default.
   Never attaches to an existing session or this harness conversation. The default
@@ -571,7 +578,7 @@ def launch(owo, model):
     try:
         os.set_blocking(request_write, False)
         os.set_blocking(response_read, False)
-        argv = [sys.executable, str(Path(__file__).resolve()), "--worker"]
+        argv = [sys.executable, str(Path(__file__).resolve()), "--worker", "--controlled"]
         if model:
             argv += ["--model", model]
         worker_child = subprocess.Popen(argv, stdin=request_read, stdout=response_write,
@@ -620,8 +627,13 @@ def main():
     parser.add_argument("--model", help="OpenCode provider/model, including your configured Go provider")
     parser.add_argument("--owo", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--controlled", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
+        if args.worker and args.controlled:
+            from controlled_session import worker as controlledWorker
+            signal.signal(signal.SIGTERM, terminate)
+            return controlledWorker(api, emit, args.model)
         return worker(args.model) if args.worker else launch(args.owo, args.model)
     except (OSError, ValueError):
         print("[vex] session host could not start; build TUI and configure OpenCode V2 first", file=sys.stderr)
