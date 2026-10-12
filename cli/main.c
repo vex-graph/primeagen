@@ -157,8 +157,8 @@ static int connectHost(const char *path, bool owo) {
     return 1;
 }
 
-static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, uint8_t *styles, size_t cap) {
-    return Primeagen_draw(state, owo, focused, sessionMode, busy, row, styles, cap);
+static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, bool failed, char *row, uint8_t *styles, size_t cap) {
+    return Primeagen_draw(state, owo, focused, sessionMode, busy, failed, row, styles, cap);
 }
 
 int main(int argc, char **argv) {
@@ -402,7 +402,7 @@ int main(int argc, char **argv) {
         }
         if (ok && Tui_isDirty(&state)) {
             if (selectText) {
-                ok = view(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, styles, capacity);
+                ok = view(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), sessionFailed, row, styles, capacity);
                 if (ok && rows >= TUI_MIN_ROWS && columns >= TUI_MIN_COLUMNS) {
                     int caretY, caretX;
                     getyx(stdscr, caretY, caretX);
@@ -412,7 +412,7 @@ int main(int argc, char **argv) {
                     ok = refresh() != ERR;
                 }
             } else
-                ok = panelsView(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), panel, selection, listWidth, row, styles, capacity);
+                ok = panelsView(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), sessionFailed, panel, selection, listWidth, row, styles, capacity);
             Tui_setDirty(&state, false);
         }
         if (!ok)
@@ -546,7 +546,13 @@ int main(int argc, char **argv) {
                 ok = Tui_add(&state, notice, strlen(notice));
                 continue;
             }
-            if (sessionMode && (sessionFailed || SessionBridge_isBusy(&bridge) || Tui_getInputLength(&state) == 0))
+            if (sessionMode && sessionFailed) {
+                // The wire is poisoned; say so instead of silently ignoring Enter.
+                const char *stuck = "This session is closed after a failure. Ctrl-Q, relaunch, and reconnect to continue.";
+                ok = Tui_addStyled(&state, stuck, strlen(stuck), TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false);
+                continue;
+            }
+            if (sessionMode && (SessionBridge_isBusy(&bridge) || Tui_getInputLength(&state) == 0))
                 continue;
             if (sessionMode && !SessionBridge_submit(&bridge, Tui_getInput(&state)))
                 continue;

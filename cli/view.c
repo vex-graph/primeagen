@@ -17,7 +17,7 @@
  * MODULE: Primeagen view (cli/view.c)
  * OWNED STATE: none; host owns every resource and palette.
  * FUNCTION REGISTRY:
- *   bool Primeagen_draw(Tui *, bool owo, bool focused, bool sessionMode,
+ *   bool Primeagen_draw(Tui *, bool owo, bool focused, bool sessionMode, bool busy,
  *                       bool busy, char *row, uint8_t *styles, size_t cap)
  *       Paint resident model into caller's live ncurses screen.
  *   const void *VkModuleGetTrampolines(uint32_t *count) : trusted loader exports.
@@ -34,7 +34,7 @@
  *   bool Primeagen_panelsClick(x,y,rows,columns,listWidth,panel,selection,
  *                             int *outPanel,int *outSelection)
  *       Stateless hit admission; preserves outputs on invalid/outside input.
- *   bool Primeagen_drawPanels(Tui *,bool,bool,bool,bool,int panel,int selection,
+ *   bool Primeagen_drawPanels(Tui *,bool,bool,bool,bool,bool,int panel,int selection,
  *                             int listWidth,char *row,uint8_t *styles,size_t cap)
  *       Connected rail + people/server/channel preview + independent chat region.
  * PANEL CONTRACT: host owns mode/selection, not a provider registry. Selection 0
@@ -102,7 +102,7 @@ static chtype attributes(uint8_t style) {
     return value;
 }
 
-static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, bool busy,
+static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, bool failed,
                        int left, int selection, char *row, uint8_t *styles, size_t cap) {
     if (state == nullptr)
         return false;
@@ -171,7 +171,7 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     size_t offset = length > width ? length - width : 0;
     if (selection == 0)
         mvaddnstr(rows - 2, left + 2, Tui_getInput(state) + offset, (int) width);
-    const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | inspect auto | edit/shell ask | Enter sends") : (owo ? "OwO | disconnected | /connect uses Go login" : "Disconnected | /connect uses OpenCode Go login");
+    const char *status = sessionMode ? (failed ? "OpenCode session closed after a failure | Ctrl-Q and relaunch" : busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | inspect auto | edit/shell ask | Enter sends") : (owo ? "OwO | disconnected | /connect uses Go login" : "Disconnected | /connect uses OpenCode Go login");
     attron(COLOR_PAIR(VIEW_STATUS) | A_DIM);
     mvaddnstr(rows - 1, left, selection == 0 ? status : "Offline preview | Ctrl-P People | Ctrl-S Servers", columns - 1);
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
@@ -180,10 +180,10 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     return true;
 }
 
-bool Primeagen_draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy,
+bool Primeagen_draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, bool failed,
                     char *row, uint8_t *styles, size_t cap) {
     erase();
-    if (!drawRegion(state, owo, focused, sessionMode, busy, 0, 0, row, styles, cap))
+    if (!drawRegion(state, owo, focused, sessionMode, busy, failed, 0, 0, row, styles, cap))
         return false;
     return refresh() != ERR;
 }
@@ -238,7 +238,7 @@ static void symbol(int y, const wchar_t *text, char fallback, bool selected) {
         mvaddch(y, 2, (chtype) fallback | attr);
 }
 
-bool Primeagen_drawPanels(Tui *state, bool owo, bool focused, bool sessionMode, bool busy,
+bool Primeagen_drawPanels(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, bool failed,
                           int panel, int selection, int listWidth,
                           char *row, uint8_t *styles, size_t cap) {
     if (state == nullptr || panel < 0 || panel > 2 || selection < 0 || selection > 5)
@@ -247,7 +247,7 @@ bool Primeagen_drawPanels(Tui *state, bool owo, bool focused, bool sessionMode, 
     getmaxyx(stdscr, rows, columns);
     int left = Primeagen_chatLeft(columns, listWidth);
     erase();
-    if (!drawRegion(state, owo, focused, sessionMode, busy, left, selection, row, styles, cap))
+    if (!drawRegion(state, owo, focused, sessionMode, busy, failed, left, selection, row, styles, cap))
         return false;
     int caretY, caretX;
     getyx(stdscr, caretY, caretX);
