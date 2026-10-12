@@ -6,6 +6,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 vex=${VEXSPOKE_SOURCE_DIR:-"$root/../../ecosystem/repos/vexspoke/src"}
 api=${API_HAVEN_SOURCE_DIR:-"$root/../../ecosystem/repos/api-haven/src"}
 hot=${HOTCWAP_SOURCE_DIR:-"$root/../../ecosystem/repos/hotcwap"}
+sh "$root/tools/build.sh"
 mkdir -p "$root/.build"
 stage=$(mktemp "$root/.build/tui.XXXXXX")
 host_stage=$stage
