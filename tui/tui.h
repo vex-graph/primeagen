@@ -62,6 +62,10 @@ bool Tui_inputAddChar(Tui *self, int character);
 bool Tui_inputBackspace(Tui *self);
 void Tui_inputClear(Tui *self);
 void Tui_clear(Tui *self);
+/* Remove the newest entry and its buffers; false when the transcript is empty
+ * (an ordinary no-change condition, not a rejection). Used by the live
+ * "working..." placeholder, which is always the trailing entry while shown. */
+bool Tui_popLast(Tui *self);
 void Tui_free(Tui *self);
 
 bool Tui_setSize(Tui *self, int rows, int columns);

@@ -85,6 +85,8 @@
  *   - bool Tui_inputBackspace(Tui *self)
  *   - void Tui_inputClear(Tui *self)
  *   - void Tui_clear(Tui *self)
+ *   - bool Tui_popLast(Tui *self)
+ *     Remove the newest entry; empty is ordinary no-change, not rejection.
  *
  * Setters:
  *   - bool Tui_setInput(Tui *self, const char *text, size_t length)
@@ -363,6 +365,23 @@ void Tui_clear(Tui *self) {
     (*self).count = 0;
     (*self).scroll = 0;
     (*self).dirty = true;
+}
+
+/* Drop only the newest entry: the caller owns the "it was the trailing one"
+ * invariant. Empty is ordinary no-change, never a rejection. */
+bool Tui_popLast(Tui *self) {
+    if (!Tui_isReady(self))
+        return reject("unready transcript owner");
+    if ((*self).count == 0)
+        return false;
+    TuiEntry *entry = &(*self).entries[(*self).count - 1];
+    free((*entry).text);
+    free((*entry).styles);
+    *entry = (TuiEntry) {0};
+    --(*self).count;
+    Tui_setScroll(self, (*self).scroll);
+    (*self).dirty = true;
+    return true;
 }
 
 void Tui_free(Tui *self) {
