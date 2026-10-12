@@ -71,17 +71,25 @@ Python host invokes installed OpenCode V2's official API CLI as a bounded tool;
 OpenCode owns authentication, provider/model selection and remote agent execution.
 This narrow consumer-adapter exception does not duplicate an ecosystem connector
 or move transport ownership. No auth-file/token copying, implicit installs or
-existing-session attachment. New dedicated sessions request deny-all permissions,
-verify the echo before each prompt and never send approvals. Server/config/plugin
+existing-session attachment. New dedicated sessions request the default policy
+(inspection automatic; edits, shell, web fetch/search, external directories and
+`.env` reads wait for an explicit terminal decision; everything else denied),
+verify the echoed rules before each turn and answer approvals only from the
+terminal. The native adapter forwards the human's once/always/reject reply and
+owns no rule itself; OpenCode enforces the decision and owns any saved project
+approval, so a configured deny always wins. Server/config/plugin
 trust and live policy enforcement remain explicit gaps. Personality instructions
 are taken from canonical C Owo_instructions. Native TUI polls borrowed nonblocking
 pipes, not sockets or workers. Derived SessionBridge wire buffers/identities change
-only through admission/poll/free (Conflict Triage Law managed accessor exception).
+only through admission/decide/poll/free (Conflict Triage Law managed accessor
+exception).
 Cold projections redact transcript buffers and summarize the borrowed Haven driver,
 whose current class has no bounded projection; never dump prompt/response values.
 Remote history remains with OpenCode; local cancellation attempts remote interrupt
-but does not guarantee it. Initial session mode is chat-only, not tool consent or
-native-agent replacement. Codex App Server remains unimplemented.
+but does not guarantee it. Tool execution happens inside OpenCode under the
+enforced policy: the local `tools/` C adapters are a separate `chat` path and are
+not reachable from this session. It is not a native-agent replacement or sandbox.
+Codex App Server remains unimplemented.
 
 Chat may read checkout-root Git-ignored `.env` for OPENAI_API_KEY and
 ANTHROPIC_API_KEY only. File parsing is bounded, literal and failure-preserving;
@@ -102,10 +110,40 @@ implementation, crash recovery or sandbox is implied. The named offline owner is
 `tests/primeagen/cli/update_test.py`, with headless cells and scripted PTY evidence;
 appearance and live remote session policy remain separate proof.
 
-Model output is untrusted data, never authorization. Every read, Func build and
-artifact run needs separate host/user approval. Denial performs no operation.
-Build is not run permission. Only session-created artifact identities can run;
-no arbitrary shell/executable or auto-approve surface is offered. Stable trusted
+Model output is untrusted data, never authorization. Every tool needs separate
+host/user approval. The exact JSON tool tags are read, list, write, edit, create,
+delete, bash and websearch, plus the existing Func build/run tags. Their cold C23
+file/exec adapters live in `tools/<name>.{c,h}`, with shared fs admission and a
+private CLI entry. Python remains the consent/provider/whole-child-budget adapter.
+This is the constitution's explicit standalone R5 consumer exception, not a new
+ecosystem IO/NIO, process or network driver. No live provider/tool claim follows
+from fake tagged-agent tests. The connected OpenCode session now runs its own
+approval bridge under the default policy above; that remote policy is OpenCode's,
+separate from these local C adapters, and both remain distinct from the
+unimplemented server/channel/role runtime.
+
+Denial never spawns a tool child or mutates files. File paths are canonical and
+workspace-relative; parents must exist, symlink/hardlink/nonregular aliases reject.
+Create admits an absent file (0600), write replaces an existing file via staged
+rename, edit replaces exactly one nonempty match, delete unlinks one regular file
+without recursion/undo. Replacement changes inode and may lose ACL/xattr/ownership
+metadata; it preserves permission bits, not general metadata or crash durability.
+Stable trusted tree/external serialization required; hostile concurrent writers
+are outside contract. Cancellation after publication does not roll it back; SIGKILL
+may leave a staging file. These remain partial consumer adapters, not trusted
+production persistence backends with complete fault/leak/platform proof.
+
+Bash is a separately approved /bin/bash --noprofile --norc -c action. It inherits
+host environment/privileges and can escape the workspace, read secrets, mutate
+files and contact networks; file confinement does not sandbox Bash. Search requires
+a host-selected trusted executable receiving one literal query argument and
+using authorized APIs; no scraper, implicit installation or guessed provider.
+Both replace the supervised child through exec, never system() or unbounded wait.
+The host bounds output/time and attempts group cancellation/reap; group signalling
+refusal is observable and remains an unresolved descendant-cleanup gap.
+
+Build is not run permission. Func run still requires a session-created artifact;
+no model-selected search executable or auto-approve surface is offered. Stable trusted
 workspace and compiler inputs are required; path checks are not a sandbox.
 Child execution has an overall deadline, simultaneous bounded output and kill/reap
 cleanup. Each retained result reports failure or truncation explicitly. History
