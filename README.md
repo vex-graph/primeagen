@@ -34,6 +34,14 @@ Explicit `session` connects this same terminal to a dedicated OpenCode chat sess
 with retained server history and final answers (not streaming). Automated fake
 CLI/pipe owners prove local wiring, not live Go entitlement or permission enforcement.
 
+Explicit `/update` now reloads native terminal rendering and local command code
+through Hotcwap, preserving resident draft/history and session pipes. Build the
+candidate with `sh cli/build.sh` in another terminal, then type `/update` in the
+running app. New submissions pause; an active turn finishes before checksum/ABI
+admission, candidate restore and commit or rejection, then submissions resume.
+The displayed generation identifies the running code. This is a trusted local
+developer release, not a network updater or full agent-runtime migration.
+
 Model replies now use a small **C terminal Markdown adapter**: bold, emphasis
 (portable underline fallback), headings, yellow inline/fenced code, and colored
 speaker labels. Markers are removed before wrapping; repeated prose blank lines
@@ -91,6 +99,9 @@ checkouts. A standalone checkout can live anywhere: set `API_HAVEN_SOURCE_DIR`,
 `HARNESS_SOURCE_DIR`, `VEXSPOKE_SOURCE_DIR` to their `src` directories before
 building, and set `FUNC_PATH` or `--func` to the Func launcher. These are explicit
 source/tool dependencies, not a requirement to register Primeagen inside Hotcwap.
+The terminal build additionally requires `HOTCWAP_SOURCE_DIR` (repository root,
+defaulting to the sibling ecosystem checkout). It consumes Hotcwap's loader;
+Primeagen remains standalone rather than Kernel-registered.
 Missing dependencies fail; nothing is fetched or installed implicitly.
 
 ### Use your existing OpenCode / Go configuration
@@ -148,7 +159,7 @@ creates a dedicated chat, never attaches to this coding session. If Go is not
 configured, connect **OpenCode Go** using OpenCode's own `/connect` first.
 Primeagen does not accept/store an API key here. The handoff starts a fresh
 terminal view; disconnected drafts are not transferred. `/help`, `/clear`
-(display only), and `/quit` are local commands; unsupported slash commands are
+(display only), `/update`, and `/quit` are local commands; unsupported slash commands are
 reported locally, never sent to the model. `/settings`, server/channel navigation,
 streaming, Zen key entry and agent tool approval are not implemented.
 
@@ -185,3 +196,10 @@ but does not contact a model.
   references/control flow, arbitrary external commands and registry extensibility
   remain future work. Building is never implicit permission to execute.
 - All work is cold-path; no zero-allocation/realtime or battle-tested claim.
+- Updates reload only `cli/view.c` rendering/command exports. Host, Tui layouts,
+  provider adapters, roles and tools require separate implementation/restart.
+  SHA256 references come from the trusted local builder, not model output.
+  Constructors/native modules are trusted, not sandboxed. Complete-set checks and
+  detected rollback are tested; crash/power-loss recovery, signatures, hostile
+  directories, fully ASan-instrumented dylib reload, leaks and other platforms
+  remain gaps. An unresolved disk rollback stops the terminal, never resumes it.
