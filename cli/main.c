@@ -64,9 +64,12 @@
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
  *   Small terminals show resize guidance; quit remains available by Ctrl-Q.
- *   Mouse support depends on terminal; keyboard provides PgUp/PgDn, End,
- *   Ctrl-L clear, Tab focus, Enter send, Backspace, Ctrl-Q quit. Resize recalculates all
- *   bounds. Input is printable ASCII; transcript controls are escaped by Tui.
+ *   Mouse support depends on terminal; keyboard provides PgUp/PgDn, Up/Down,
+ *   End, Ctrl-L clear, Tab focus, Enter send, Backspace, Ctrl-Q quit. Resize
+ *   recalculates all bounds. Input is printable ASCII; transcript controls are
+ *   escaped by Tui. Wheel-up is BUTTON4; the fifth-button bit is registered
+ *   explicitly because this SDK's ncurses is MOUSE_VERSION 1 and does not
+ *   declare BUTTON5_PRESSED, which otherwise leaves wheel-down unreachable.
  *   Default is disconnected. /connect explicitly starts the existing Python host
  *   using OpenCode login; no pasted keys or tool execution happens here.
  *   The connected session runs under the host's default policy: inspection is
@@ -90,6 +93,14 @@
 #define TUI_CTRL_Q 17
 #define TUI_CTRL_L 12
 #define TUI_CTRL_T 20
+/* This SDK's ncurses is NCURSES_MOUSE_VERSION 1, which has room for a fifth
+ * button at shift 24 but does not declare BUTTON5_PRESSED. Without an explicit
+ * bit, wheel-down is absent from mousemask and silently unreachable. */
+#if NCURSES_MOUSE_VERSION > 1
+#define TUI_WHEEL_DOWN BUTTON5_PRESSED
+#else
+#define TUI_WHEEL_DOWN ((mmask_t) (NCURSES_BUTTON_PRESSED << 24))
+#endif
 #define TUI_COMMAND_MESSAGE 1
 #define TUI_COMMAND_CONNECT 2
 #define TUI_COMMAND_QUIT 3
@@ -116,6 +127,16 @@ static const char *approvalReply(int key) {
     if (key == 'r' || key == 'n')
         return "reject";
     return nullptr;
+}
+
+/* The OpenCode speaker label appears once per turn; the caller keeps the flag.
+ * Only this loop appends transcript entries during a turn, so the live
+ * "working..." placeholder stays the newest entry whenever it is shown. */
+static bool openTurn(Tui *state, bool *open) {
+    if (*open)
+        return true;
+    *open = Tui_addStyled(state, "OpenCode:", 9, TEXT_STYLE_ASSISTANT | TEXT_STYLE_BOLD, false);
+    return *open;
 }
 
 /* Terminal must be restored first. Never transfer keys or copy auth files. */
@@ -274,10 +295,7 @@ int main(int argc, char **argv) {
     }
     timeout(TUI_POLL_MS);
     mouseinterval(0);
-    mmask_t mask = BUTTON1_PRESSED | BUTTON4_PRESSED;
-#ifdef BUTTON5_PRESSED
-    mask |= BUTTON5_PRESSED;
-#endif
+    mmask_t mask = BUTTON1_PRESSED | BUTTON4_PRESSED | TUI_WHEEL_DOWN;
     mousemask(selectText ? 0 : mask, nullptr);
     char *row = nullptr;
     uint8_t *styles = nullptr;
@@ -285,26 +303,50 @@ int main(int argc, char **argv) {
     bool focused = true;
     bool sessionFailed = false;
     bool updateRequested = false;
+    bool turnOpen = false;
+    bool workingShown = false;
     uint32_t shownApproval = 0;
     while (ok && !stopped) {
         int completed = SessionBridge_poll(&bridge);
+        if (workingShown) {
+            (void) Tui_popLast(&state); // always the trailing entry while shown
+            workingShown = false;
+        }
         if (completed) {
             const char *text = SessionBridge_getText(&bridge);
-            const char *label = completed > 0 ? "OpenCode:" : "Connection error:";
-            uint8_t role = completed > 0 ? TEXT_STYLE_ASSISTANT : TEXT_STYLE_ERROR;
-            ok = Tui_addStyled(&state, label, strlen(label), role | TEXT_STYLE_BOLD, false) &&
-                 Tui_addStyled(&state, text, strlen(text), 0, completed > 0);
+            ok = openTurn(&state, &turnOpen);
+            if (ok && completed > 0)
+                ok = Tui_addStyled(&state, "", 0, 0, false) &&
+                     Tui_addStyled(&state, "answer:", 7, TEXT_STYLE_ASSISTANT | TEXT_STYLE_BOLD, false) &&
+                     Tui_addStyled(&state, text, strlen(text), 0, true) &&
+                     Tui_addStyled(&state, "", 0, 0, false);
+            else if (ok)
+                ok = Tui_addStyled(&state, "Connection error:", 17, TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false) &&
+                     Tui_addStyled(&state, text, strlen(text), TEXT_STYLE_ERROR, false) &&
+                     Tui_addStyled(&state, "", 0, 0, false);
             sessionFailed = completed < 0;
+            turnOpen = false;
             shownApproval = 0;
         }
+        // Tool activity streams in as it happens, not as one lump at the end.
+        for (const char *note = SessionBridge_takeNote(&bridge); ok && note != nullptr; note = SessionBridge_takeNote(&bridge))
+            ok = openTurn(&state, &turnOpen) && Tui_addStyled(&state, note, strlen(note), TEXT_STYLE_CODE, false);
         if (SessionBridge_isAwaiting(&bridge) && SessionBridge_getApprovalSerial(&bridge) != shownApproval) {
             shownApproval = SessionBridge_getApprovalSerial(&bridge);
+            if (workingShown) {
+                (void) Tui_popLast(&state); // keep the live placeholder last: restore it below
+                workingShown = false;
+            }
             char question[SESSION_APPROVAL_LABEL_CAP + 96];
             snprintf(question, sizeof(question), "Approve %s?  [o]nce  [a]lways  [r]eject",
                      SessionBridge_getApprovalLabel(&bridge));
-            ok = Tui_addStyled(&state, question, strlen(question), TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false);
+            ok = openTurn(&state, &turnOpen) &&
+                 Tui_addStyled(&state, question, strlen(question), TEXT_STYLE_ERROR | TEXT_STYLE_BOLD, false);
             Tui_setDirty(&state, true);
         }
+        if (ok && !workingShown && (SessionBridge_isBusy(&bridge) || SessionBridge_isAwaiting(&bridge)))
+            ok = openTurn(&state, &turnOpen) &&
+                 Tui_addStyled(&state, "working...", 10, TEXT_STYLE_CODE, false) && (workingShown = true);
         if (updateRequested && !SessionBridge_isBusy(&bridge)) {
             uint64_t before = Hot_get_generation(hot);
             uint32_t loaded = 0;
@@ -411,10 +453,8 @@ int main(int argc, char **argv) {
             TuiMouseKind kind;
             if (event.bstate & BUTTON4_PRESSED)
                 kind = TUI_MOUSE_WHEEL_UP;
-#ifdef BUTTON5_PRESSED
-            else if (event.bstate & BUTTON5_PRESSED)
+            else if (event.bstate & TUI_WHEEL_DOWN)
                 kind = TUI_MOUSE_WHEEL_DOWN;
-#endif
             else if (event.bstate & BUTTON1_PRESSED)
                 kind = TUI_MOUSE_CLICK;
             else
@@ -436,8 +476,11 @@ int main(int argc, char **argv) {
             TuiMouseAction action = TuiMouse_dispatch(&state, event.x - chatLeft, event.y, kind);
             if (action == TUI_MOUSE_QUIT)
                 stopped = 1;
-            else if (action == TUI_MOUSE_CLEAR && selection == 0)
+            else if (action == TUI_MOUSE_CLEAR && selection == 0) {
                 Tui_clear(&state);
+                workingShown = false; // the placeholder was cleared with everything else
+                turnOpen = false;
+            }
             else if (action == TUI_MOUSE_INPUT && selection == 0)
                 focused = true;
             else if (kind == TUI_MOUSE_CLICK)
@@ -447,10 +490,17 @@ int main(int argc, char **argv) {
             Tui_scrollBy(&state, (int64_t) Tui_getViewportHeight(&state));
         else if (key == KEY_NPAGE && (selection == 0 || selectText))
             Tui_scrollBy(&state, -(int64_t) Tui_getViewportHeight(&state));
+        else if (key == KEY_UP && (selection == 0 || selectText))
+            Tui_scrollBy(&state, 1);
+        else if (key == KEY_DOWN && (selection == 0 || selectText))
+            Tui_scrollBy(&state, -1);
         else if (key == KEY_END && (selection == 0 || selectText))
             Tui_setScroll(&state, 0);
-        else if (key == TUI_CTRL_L && selection == 0)
+        else if (key == TUI_CTRL_L && selection == 0) {
             Tui_clear(&state);
+            workingShown = false; // the placeholder was cleared with everything else
+            turnOpen = false;
+        }
         else if (key == '\t' && selection == 0) {
             focused = true;
             Tui_setDirty(&state, true);
@@ -460,6 +510,11 @@ int main(int argc, char **argv) {
         else if (focused && selection == 0 && (key == '\n' || key == KEY_ENTER)) {
             int action = localCommand(&state, sessionMode);
             if (action != 0) {
+                // The command may have appended or cleared output, so the live
+                // placeholder is no longer guaranteed to be the trailing entry.
+                // Drop the flag and let the loop append a fresh one instead of
+                // popping a line the placeholder no longer owns.
+                workingShown = false;
                 if (action < 0)
                     ok = false;
                 else if (action == TUI_COMMAND_CONNECT) {
@@ -487,9 +542,12 @@ int main(int argc, char **argv) {
             if (sessionMode && !SessionBridge_submit(&bridge, Tui_getInput(&state)))
                 continue;
             ok = Tui_addStyled(&state, "You:", 4, TEXT_STYLE_USER | TEXT_STYLE_BOLD, false) &&
-                 Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state));
+                 Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state)) &&
+                 Tui_add(&state, "", 0);
             if (ok)
                 Tui_inputClear(&state);
+            turnOpen = false; // the speaker label streams with the first output
+            workingShown = false;
         } else if (focused && selection == 0 && (key == KEY_BACKSPACE || key == 127 || key == '\b'))
             Tui_inputBackspace(&state);
         else if (focused && selection == 0 && key >= ' ' && key <= '~')
