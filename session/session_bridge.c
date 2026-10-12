@@ -28,7 +28,12 @@
  * to the terminal, not the model. SessionBridge_decide queues exactly one
  * once/always/reject reply and restarts the remote watchdog. The bridge never
  * decides by itself and never auto-approves: only an explicit terminal decision
- * leaves here, and the durable project rule stays OpenCode's. Free cancels
+ * leaves here, and the durable project rule stays OpenCode's.
+ *
+ * A turn is also a stream, not one lump. The host emits a bounded {note:...} line
+ * as each tool acts, and the bridge surfaces it through SessionBridge_takeNote so
+ * the terminal can append it immediately. Exactly one frame is consumed per poll,
+ * so a burst of notes stays ordered and none is dropped. Free cancels
  * admission before the host releases pipes; remote cancellation is best effort,
  * not proof of a killed server operation. Derived buffers/identity have no raw
  * setters per the Conflict Triage Law and Single Class Per File Law (Java Law). */
@@ -53,18 +58,21 @@
  *   uint32_t approvalSerial : increments per approval frame; display identity.
  *   char approvalId[SESSION_APPROVAL_ID_CAP] : remote permission identity.
  *   char approvalLabel[SESSION_APPROVAL_LABEL_CAP] : bounded display text.
+ *   char note[SESSION_NOTE_CAP] : newest streamed activity line.
+ *   bool notePending : a note is waiting for the terminal to take it.
  *   char decision[8] : queued reply spelling; empty when nothing is queued.
  * FUNCTION REGISTRY:
  *   SessionBridge SessionBridge_0(void) : unbound.
  *   SessionBridge SessionBridge_2(int readFd, int writeFd) : borrowed pipes.
  *   bool SessionBridge_submit(SessionBridge *, const char *) : cold admission.
- *   int SessionBridge_poll(SessionBridge *) : bounded IO; approval or completion.
+ *   int SessionBridge_poll(SessionBridge *) : bounded IO; one frame per call.
  *   void SessionBridge_free(SessionBridge *) : cancel borrowed job, never close fd.
  *   void SessionBridge_setOwo(SessionBridge *, bool), bool SessionBridge_isOwo(const SessionBridge *)
  *   bool SessionBridge_isBusy(const SessionBridge *), const char *SessionBridge_getText(const SessionBridge *)
  *   bool SessionBridge_isAwaiting(const SessionBridge *)
  *   const char *SessionBridge_getApprovalLabel(const SessionBridge *)
  *   uint32_t SessionBridge_getApprovalSerial(const SessionBridge *)
+ *   const char *SessionBridge_takeNote(SessionBridge *) : borrow one note, clear it.
  *   bool SessionBridge_decide(SessionBridge *, const char *) : queue once/always/reject.
  *   bool SessionBridge_setTimeout(SessionBridge *, uint64_t), uint64_t SessionBridge_getTimeout(const SessionBridge *) : validated cold current watchdog, 1..120000ms.
  *   bool SessionBridge_toString(const SessionBridge *, char *, size_t, bool *) : bounded value.
@@ -73,15 +81,18 @@
  *   uint64_t nowMs(void) : monotonic clock, zero on clock failure.
  *   bool queueText(SessionBridge *, const char *, const char *) : one-field frame.
  *   bool spawn(void *, const EngineProviderSlot *, const char *, size_t, uint64_t, void **) : queue JSON.
- *   HarnessStatus pollJob(void *, void *, uint64_t) : progress pipes, validate reply.
+ *   HarnessStatus handleFrame(SessionBridge *, JsonDoc *) : classify one reply frame.
+ *   HarnessStatus pollJob(void *, void *, uint64_t) : progress pipes, one frame per call.
  *   void cancel(void *, void *) : clear pending IO, poison wire.
  * CONTRACT: trusted live pipes, valid owner address, serialized calls only.
  * Null/default safe, busy rejection preserves current turn; no arbitrary pointer
  * validation. Prompt is printable ASCII/newline/tab, response bytes are escaped
- * by the display. Local helper emits exactly {ok:boolean,text:string} or
- * {ask:{id,label}}; decisions emit {decision:string}. Duplicate keys, embedded
- * NUL, trailing frames and excess fields reject. Error texts are generic and
- * never contain provider diagnostics/tokens. No history storage or secrets.
+ * by the display. Local helper emits exactly {ok:boolean,text:string},
+ * {ask:{id,label}} or {note:string}; decisions emit {decision:string}. Duplicate
+ * keys, embedded NUL, trailing junk in one frame and excess fields reject. Error
+ * texts are generic and never contain provider diagnostics/tokens. Notes are
+ * single bounded display lines, never parsed as instructions. No history storage
+ * or secrets.
  * ============================================================================ */
 ;;INTENTION("derived wire identity/buffers mutate only through admission/decide/poll/free; projections redact transcript buffers and summarize the borrowed Haven driver (which has no bounded projection), preserving privacy under the Conflict Triage Law")
 static uint64_t nowMs(void) {
@@ -129,9 +140,59 @@ static bool spawn(void *context, const EngineProviderSlot *engine, const char *p
     (*self).startedMs = nowMs();
     (*self).text[0] = '\0';
     (*self).awaiting = false;
+    (*self).notePending = false;
+    (*self).note[0] = '\0';
     (*self).decision[0] = '\0';
     *outHandle = self;
     return (*self).startedMs != 0;
+}
+;;WHAT("SessionBridge")
+static HarnessStatus handleFrame(SessionBridge *self, JsonDoc *doc) {
+    JsonRef root = Json_root(doc);
+    if (Json_type(doc, root) != JSON_OBJECT)
+        return HARNESS_STATUS_TIMEOUT;
+    JsonRef ask = Json_member(doc, root, "ask");
+    JsonRef note = Json_member(doc, root, "note");
+    if (Json_count(doc, root) == 1 && Json_type(doc, ask) == JSON_OBJECT) {
+        JsonRef identity = Json_member(doc, ask, "id");
+        JsonRef label = Json_member(doc, ask, "label");
+        if (Json_count(doc, ask) != 2 || Json_type(doc, identity) != JSON_STRING ||
+            Json_type(doc, label) != JSON_STRING)
+            return HARNESS_STATUS_TIMEOUT;
+        uint32_t idLength, labelLength;
+        const char *idValue = Json_string(doc, identity, &idLength);
+        const char *labelValue = Json_string(doc, label, &labelLength);
+        if (!idValue || idLength == 0 || memchr(idValue, '\0', idLength) || !labelValue ||
+            memchr(labelValue, '\0', labelLength) ||
+            !Json_getString(doc, identity, (*self).approvalId, sizeof((*self).approvalId)) ||
+            !Json_getString(doc, label, (*self).approvalLabel, sizeof((*self).approvalLabel)))
+            return HARNESS_STATUS_TIMEOUT;
+        (*self).awaiting = true;
+        (*self).approvalSerial++;
+        return HARNESS_STATUS_RUNNING;
+    }
+    if (Json_count(doc, root) == 1 && Json_type(doc, note) == JSON_STRING) {
+        /* A decoded NUL byte would truncate the display line; reject it instead. */
+        uint32_t noteLength;
+        const char *noteValue = Json_string(doc, note, &noteLength);
+        if (!noteValue || noteLength == 0 || memchr(noteValue, '\0', noteLength) ||
+            !Json_getString(doc, note, (*self).note, sizeof((*self).note)))
+            return HARNESS_STATUS_TIMEOUT;
+        (*self).notePending = true;
+        return HARNESS_STATUS_RUNNING;
+    }
+    JsonRef success = Json_member(doc, root, "ok");
+    JsonRef text = Json_member(doc, root, "text");
+    if (Json_count(doc, root) != 2 ||
+        (Json_type(doc, success) != JSON_TRUE && Json_type(doc, success) != JSON_FALSE) ||
+        Json_type(doc, text) != JSON_STRING)
+        return HARNESS_STATUS_TIMEOUT;
+    uint32_t textLength;
+    const char *value = Json_string(doc, text, &textLength);
+    if (!value || memchr(value, '\0', textLength) || !Json_bool(doc, success) ||
+        !Json_getString(doc, text, (*self).text, sizeof((*self).text)))
+        return HARNESS_STATUS_TIMEOUT;
+    return HARNESS_STATUS_DONE;
 }
 ;;WHAT("SessionBridge")
 static HarnessStatus pollJob(void *context, void *handle, uint64_t timeoutMs) {
@@ -154,62 +215,46 @@ static HarnessStatus pollJob(void *context, void *handle, uint64_t timeoutMs) {
         if (!now || now < (*self).startedMs || now - (*self).startedMs >= timeoutMs)
             goto fail;
     }
-    if ((*self).responseLength >= sizeof((*self).response) - 1)
-        goto fail;
-    ssize_t n = read((*self).readFd, (*self).response + (*self).responseLength,
-                     sizeof((*self).response) - 1 - (*self).responseLength);
-    if (n == 0)
-        goto fail;
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-            return HARNESS_STATUS_RUNNING;
-        goto fail;
-    }
-    if (memchr((*self).response + (*self).responseLength, '\0', (size_t) n))
-        goto fail;
-    (*self).responseLength += (size_t) n;
-    (*self).response[(*self).responseLength] = '\0';
+    /* Exactly one frame per call keeps a burst of streamed notes ordered. */
     char *newline = memchr((*self).response, '\n', (*self).responseLength);
-    if (!newline)
-        return HARNESS_STATUS_RUNNING;
-    if (newline != (*self).response + (*self).responseLength - 1)
-        goto fail;
+    if (newline == nullptr) {
+        if ((*self).responseLength >= sizeof((*self).response) - 1)
+            goto fail;
+        ssize_t n = read((*self).readFd, (*self).response + (*self).responseLength,
+                         sizeof((*self).response) - 1 - (*self).responseLength);
+        if (n == 0)
+            goto fail;
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                return HARNESS_STATUS_RUNNING;
+            goto fail;
+        }
+        if (memchr((*self).response + (*self).responseLength, '\0', (size_t) n))
+            goto fail;
+        (*self).responseLength += (size_t) n;
+        (*self).response[(*self).responseLength] = '\0';
+        newline = memchr((*self).response, '\n', (*self).responseLength);
+        if (newline == nullptr)
+            return HARNESS_STATUS_RUNNING;
+    }
+    size_t frame = (size_t) (newline - (*self).response);
     *newline = '\0';
     JsonDoc doc;
     JsonNode nodes[8];
     char scratch[SESSION_RESPONSE_CAP];
     if (!Json_parse(&doc, nodes, 8, scratch, sizeof(scratch), (*self).response))
         goto fail;
-    JsonRef root = Json_root(&doc);
-    JsonRef ask = Json_member(&doc, root, "ask");
-    if (Json_type(&doc, root) == JSON_OBJECT && Json_count(&doc, root) == 1 && Json_type(&doc, ask) == JSON_OBJECT) {
-        JsonRef identity = Json_member(&doc, ask, "id");
-        JsonRef label = Json_member(&doc, ask, "label");
-        if (Json_count(&doc, ask) != 2 || Json_type(&doc, identity) != JSON_STRING ||
-            Json_type(&doc, label) != JSON_STRING ||
-            !Json_getString(&doc, identity, (*self).approvalId, sizeof((*self).approvalId)) ||
-            !Json_getString(&doc, label, (*self).approvalLabel, sizeof((*self).approvalLabel)))
-            goto fail;
-        (*self).awaiting = true;
-        (*self).approvalSerial++;
-        (*self).responseLength = 0;
-        return HARNESS_STATUS_RUNNING;
-    }
-    JsonRef success = Json_member(&doc, root, "ok");
-    JsonRef text = Json_member(&doc, root, "text");
-    if (Json_type(&doc, root) != JSON_OBJECT || Json_count(&doc, root) != 2 ||
-        (Json_type(&doc, success) != JSON_TRUE && Json_type(&doc, success) != JSON_FALSE) ||
-        Json_type(&doc, text) != JSON_STRING)
+    HarnessStatus status = handleFrame(self, &doc);
+    size_t remaining = (*self).responseLength - frame - 1;
+    memmove((*self).response, newline + 1, remaining);
+    (*self).responseLength = remaining;
+    if (status == HARNESS_STATUS_TIMEOUT)
         goto fail;
-    uint32_t textLength;
-    const char *value = Json_string(&doc, text, &textLength);
-    if (!value || memchr(value, '\0', textLength) || !Json_bool(&doc, success) ||
-        !Json_getString(&doc, text, (*self).text, sizeof((*self).text)))
-        goto fail;
-    return HARNESS_STATUS_DONE;
+    return status;
 fail:
     (*self).failed = true;
     (*self).awaiting = false;
+    (*self).notePending = false;
     strcpy((*self).text, "OpenCode turn failed or timed out. Exit and relaunch; remote cancellation is best effort.");
     return HARNESS_STATUS_TIMEOUT;
 }
@@ -219,6 +264,7 @@ static void cancel(void *context, void *handle) {
     SessionBridge *self = context;
     (*self).failed = true;
     (*self).awaiting = false;
+    (*self).notePending = false;
     (*self).requestLength = 0;
 }
 SessionBridge SessionBridge_0(void) {
@@ -283,6 +329,12 @@ bool SessionBridge_isBusy(const SessionBridge *self) { return self && (*self).jo
 bool SessionBridge_isAwaiting(const SessionBridge *self) { return self && (*self).awaiting; }
 const char *SessionBridge_getApprovalLabel(const SessionBridge *self) { return self ? (*self).approvalLabel : ""; }
 uint32_t SessionBridge_getApprovalSerial(const SessionBridge *self) { return self ? (*self).approvalSerial : 0; }
+const char *SessionBridge_takeNote(SessionBridge *self) {
+    if (self == nullptr || !(*self).notePending)
+        return nullptr;
+    (*self).notePending = false;
+    return (*self).note;
+}
 bool SessionBridge_decide(SessionBridge *self, const char *decision) {
     if (!self || !decision || !(*self).jobId || (*self).failed || !(*self).awaiting ||
         (*self).requestOffset != (*self).requestLength) {
@@ -333,11 +385,11 @@ bool SessionBridge_toStringStruct(const SessionBridge *self, char *dest, size_t 
         *outTruncated = false;
     if (!dest || !cap)
         return false;
-    int n = snprintf(dest, cap, "{harness:borrowed-driver,readFd:%d,writeFd:%d,owo:%d,jobId:%u,startedMs:%llu,request:redacted,requestLength:%zu,requestOffset:%zu,response:redacted,responseLength:%zu,text:redacted,failed:%d,awaiting:%d,approvalSerial:%u,approvalId:redacted,approvalLabel:redacted,decision:redacted}",
+    int n = snprintf(dest, cap, "{harness:borrowed-driver,readFd:%d,writeFd:%d,owo:%d,jobId:%u,startedMs:%llu,request:redacted,requestLength:%zu,requestOffset:%zu,response:redacted,responseLength:%zu,text:redacted,failed:%d,awaiting:%d,approvalSerial:%u,approvalId:redacted,approvalLabel:redacted,note:redacted,notePending:%d,decision:redacted}",
                      (*self).readFd, (*self).writeFd, (*self).owo, (*self).jobId,
                      (unsigned long long) (*self).startedMs, (*self).requestLength,
                      (*self).requestOffset, (*self).responseLength, (*self).failed,
-                     (*self).awaiting, (*self).approvalSerial);
+                     (*self).awaiting, (*self).approvalSerial, (*self).notePending);
     bool cut = n < 0 || (size_t) n >= cap;
     if (outTruncated)
         *outTruncated = cut;

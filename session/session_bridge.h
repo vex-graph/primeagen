@@ -11,6 +11,7 @@
 #define SESSION_TIMEOUT_MS_MAX 120000u /* Local turn watchdog safety ceiling. */
 #define SESSION_APPROVAL_ID_CAP 160u   /* Remote permission identity + NUL. */
 #define SESSION_APPROVAL_LABEL_CAP 256u /* Bounded display text; host truncates. */
+#define SESSION_NOTE_CAP 512u          /* One bounded streamed activity line. */
 /* Owner-affine, borrowed nonblocking pipes. Host owns process and remote session.
  * Storage/status changes through submit/decide/poll/free, never raw identity
  * setters. No copies of live instances; no provider tokens or socket ownership. */
@@ -32,6 +33,8 @@ typedef struct SessionBridge {
     uint32_t approvalSerial;
     char approvalId[SESSION_APPROVAL_ID_CAP];
     char approvalLabel[SESSION_APPROVAL_LABEL_CAP];
+    char note[SESSION_NOTE_CAP];
+    bool notePending;
     char decision[8];
 } SessionBridge;
 SessionBridge SessionBridge_0(void);
@@ -59,6 +62,10 @@ bool SessionBridge_isBusy(const SessionBridge *self);
 bool SessionBridge_isAwaiting(const SessionBridge *self);
 const char *SessionBridge_getApprovalLabel(const SessionBridge *self);
 uint32_t SessionBridge_getApprovalSerial(const SessionBridge *self);
+/* Borrow the newest streamed activity line once, or nullptr when none is
+ * pending. The pointer is valid until the next poll/submit/free; the caller
+ * copies it into its own transcript before then. */
+const char *SessionBridge_takeNote(SessionBridge *self);
 /* Queue exactly one "once"/"always"/"reject" reply; false leaves the wire
  * untouched. The server owns the durable rule; a configured deny always wins. */
 bool SessionBridge_decide(SessionBridge *self, const char *decision);
