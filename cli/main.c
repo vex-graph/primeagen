@@ -2,6 +2,9 @@
 #include "tui/event/mouse_event.h"
 #include "personality/owo.h"
 #include "session/session_bridge.h"
+#include "cli/view.h"
+#include "cli/update.h"
+#include "hot/manifest.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 #include "exception/throw.h"
@@ -12,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <termios.h>
 
 ;;DEFINITION
 /* The C23 terminal preview owns ncurses screen admission and restoration, not an
@@ -38,7 +42,6 @@
  * ----------------------------------------------------------------------------
  * Private helpers:
  *   static void stop(int signalNumber) : flag shutdown; no terminal API/logging.
- *   static chtype attributes(uint8_t style) : host flags to ncurses attributes.
  *   static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, uint8_t *styles, size_t cap)
  *     Draw per-cell styled wrapped viewport, fixed input/status and cursor.
  *     No model-supplied terminal escape sequences; unsupported italic uses underline.
@@ -47,6 +50,7 @@
  * Entry:
  *   int main(int argc, char **argv)
  *     --owo / --help / --session-host / paired host --bridge-read/write fd admission;
+ *     paired --update-payload/--update-checksum enable trusted local cold updates.
  *     tty/newterm; mouse/key/session polling; restore/free.
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
@@ -61,6 +65,10 @@
  *   Clear changes display only, not remote history. getch uses 100ms slices. Screen
  *   calls are host terminal IO, not a realtime/bounded-join guarantee. Normal
  *   exits/SIGINT/SIGTERM restore mode; SIGKILL/crashes cannot promise restoration.
+ *   HotModule owns reloadable Primeagen_draw/Primeagen_command code. Tui, bridge,
+ *   permission/session host and screen remain resident. /update pauses new turns,
+ *   finishes the existing turn, synchronously resolves, then resumes; rollback
+ *   recovery-required stops rather than falsely resuming. No remote update/tools.
  * ============================================================================
  */
 #define TUI_POLL_MS 100 /* Shutdown checks between idle terminal reads. */
@@ -69,6 +77,7 @@
 #define TUI_COMMAND_MESSAGE 1
 #define TUI_COMMAND_CONNECT 2
 #define TUI_COMMAND_QUIT 3
+#define TUI_COMMAND_UPDATE 4
 #define TUI_CONNECT_MODEL "opencode-go/deepseek-v4.1-flash"
 enum { TUI_PAIR_HEADER = 1, TUI_PAIR_ACCENT = 2, TUI_PAIR_STATUS = 3, TUI_PAIR_INPUT = 4, TUI_PAIR_CODE = 5, TUI_PAIR_ERROR = 6 };
 static volatile sig_atomic_t stopped;
@@ -79,29 +88,7 @@ static void stop(int signalNumber) {
 
 /* Slash input is local; unimplemented commands are never model prompts. */
 static int command(Tui *state, bool sessionMode) {
-    const char *input = Tui_getInput(state);
-    if (*input != '/')
-        return 0;
-    if (strcmp(input, "/quit") == 0)
-        return TUI_COMMAND_QUIT;
-    if (strcmp(input, "/connect") == 0 && !sessionMode)
-        return TUI_COMMAND_CONNECT;
-    if (strcmp(input, "/clear") == 0) {
-        Tui_clear(state);
-        Tui_inputClear(state);
-        return TUI_COMMAND_MESSAGE;
-    }
-    const char *notice;
-    if (strcmp(input, "/help") == 0)
-        notice = "/connect: existing OpenCode Go login | /clear: display only | /quit: exit. Chat-only; settings/servers are not implemented yet.";
-    else if (strcmp(input, "/connect") == 0)
-        notice = "Already connected to OpenCode. Enter sends; remote history is retained. Tools remain denied.";
-    else
-        notice = "Unknown or unfinished command. /help lists working commands. This command was not sent to OpenCode.";
-    if (!Tui_add(state, notice, strlen(notice)))
-        return -1;
-    Tui_inputClear(state);
-    return TUI_COMMAND_MESSAGE;
+    return Primeagen_command(state, sessionMode);
 }
 
 /* Terminal must be restored first. Never transfer keys or copy auth files. */
@@ -118,72 +105,14 @@ static int connectHost(const char *path, bool owo) {
     return 1;
 }
 
-static chtype attributes(uint8_t style) {
-    chtype value = A_NORMAL;
-    if (style & TEXT_STYLE_BOLD)
-        value |= A_BOLD;
-    if (style & TEXT_STYLE_ITALIC)
-        value |= A_UNDERLINE; /* Portable emphasis fallback in this ncurses build. */
-    if (style & TEXT_STYLE_CODE)
-        value |= COLOR_PAIR(TUI_PAIR_CODE);
-    else if (style & TEXT_STYLE_ERROR)
-        value |= COLOR_PAIR(TUI_PAIR_ERROR);
-    else if (style & TEXT_STYLE_USER)
-        value |= COLOR_PAIR(TUI_PAIR_INPUT);
-    else if (style & (TEXT_STYLE_ASSISTANT | TEXT_STYLE_HEADING))
-        value |= COLOR_PAIR(TUI_PAIR_HEADER);
-    return value;
-}
-
 static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, char *row, uint8_t *styles, size_t cap) {
-    int rows, columns;
-    Tui_getSize(state, &rows, &columns);
-    erase();
-    if (rows < TUI_MIN_ROWS || columns < TUI_MIN_COLUMNS) {
-        mvaddnstr(0, 0, "Resize terminal; Ctrl-Q exits", columns > 1 ? columns - 1 : 0);
-        curs_set(0);
-        return refresh() != ERR;
-    }
-    attron(COLOR_PAIR(TUI_PAIR_HEADER) | A_BOLD);
-    mvaddnstr(0, 1, "Primeagen", columns - 16);
-    attroff(COLOR_PAIR(TUI_PAIR_HEADER) | A_BOLD);
-    attron(COLOR_PAIR(TUI_PAIR_ACCENT));
-    mvaddstr(0, columns - 15, "[Clear]");
-    mvaddstr(0, columns - 7, "[Quit]");
-    attroff(COLOR_PAIR(TUI_PAIR_ACCENT));
-    mvhline(1, 0, ACS_HLINE, columns);
-    size_t first = Tui_getFirstVisibleRow(state);
-    size_t total = Tui_getVisualRowCount(state);
-    size_t height = Tui_getViewportHeight(state);
-    for (size_t i = 0; i < height && first + i < total; ++i) {
-        if (!Tui_copyStyledRow(state, first + i, row, styles, cap, nullptr))
-            return false;
-        for (size_t j = 0; row[j] != '\0'; ++j)
-            mvaddch((int) i + 2, (int) j + 1, (chtype) (unsigned char) row[j] | attributes(styles[j]));
-    }
-    mvhline(rows - 4, 0, ACS_HLINE, columns);
-    attron(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
-    mvaddnstr(rows - 3, 1, sessionMode ? "/help | PgUp/PgDn scroll | Ctrl-Q quit" : "/connect (click here) | /help | Ctrl-Q quit", columns - 2);
-    attroff(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
-    attron(COLOR_PAIR(TUI_PAIR_INPUT) | A_BOLD);
-    mvaddstr(rows - 2, 0, "> ");
-    attroff(COLOR_PAIR(TUI_PAIR_INPUT) | A_BOLD);
-    size_t length = Tui_getInputLength(state);
-    size_t width = (size_t) columns - 3;
-    size_t offset = length > width ? length - width : 0;
-    mvaddnstr(rows - 2, 2, Tui_getInput(state) + offset, (int) width);
-    const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | tools denied | Enter sends") : (owo ? "OwO | disconnected | /connect uses Go login" : "Disconnected | /connect uses OpenCode Go login");
-    attron(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
-    mvaddnstr(rows - 1, 0, status, columns - 1);
-    attroff(COLOR_PAIR(TUI_PAIR_STATUS) | A_DIM);
-    curs_set(focused ? 1 : 0);
-    move(rows - 2, 2 + (int) (length - offset));
-    return refresh() != ERR;
+    return Primeagen_draw(state, owo, focused, sessionMode, busy, row, styles, cap);
 }
 
 int main(int argc, char **argv) {
     bool owo = false;
     const char *sessionHost = nullptr;
+    const char *updatePayload = nullptr, *updateChecksum = nullptr;
     bool connectRequested = false;
     int readFd = -1, writeFd = -1;
     for (int i = 1; i < argc; ++i) {
@@ -191,6 +120,10 @@ int main(int argc, char **argv) {
             owo = true;
         else if (strcmp(argv[i], "--session-host") == 0 && i + 1 < argc)
             sessionHost = argv[++i];
+        else if (strcmp(argv[i], "--update-payload") == 0 && i + 1 < argc)
+            updatePayload = argv[++i];
+        else if (strcmp(argv[i], "--update-checksum") == 0 && i + 1 < argc)
+            updateChecksum = argv[++i];
         else if ((strcmp(argv[i], "--bridge-read") == 0 || strcmp(argv[i], "--bridge-write") == 0) && i + 1 < argc) {
             bool reading = strcmp(argv[i], "--bridge-read") == 0;
             char *end;
@@ -230,20 +163,46 @@ int main(int argc, char **argv) {
     SessionBridge_setOwo(&bridge, owo);
     if (!Tui_isReady(&state))
         return 1;
+    HotModule *hot = nullptr;
+    PrimeagenDrawFn view = draw;
+    PrimeagenCommandFn localCommand = command;
+    if (updatePayload != nullptr || updateChecksum != nullptr) {
+        uint32_t loaded;
+        if (updatePayload == nullptr || updateChecksum == nullptr ||
+            !MANIFEST(MANIFEST_APP_DATA, "vexgraph", "primeagen") ||
+            !MANIFEST_LIBRARY("primeagen", (const char*) nullptr) || !MANIFEST_ENSURE() ||
+            !MANIFEST_REFLECT("primeagen", updatePayload) ||
+            (hot = Hot_init("primeagen")) == nullptr ||
+            !Primeagen_update(hot, updatePayload, updateChecksum, &loaded)) {
+            HotShutdown(hot);
+            Tui_free(&state);
+            return 1;
+        }
+        view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
+        localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
+        if (view == nullptr || localCommand == nullptr) {
+            HotShutdown(hot);
+            Tui_free(&state);
+            return 1;
+        }
+    }
     const char *greeting = sessionMode ? "Primeagen | OpenCode-backed chat; no model request until Enter" : "Primeagen | Type /connect or click /connect below to chat with OpenCode Go. No key is copied; uses your existing login.";
     if (!Tui_add(&state, greeting, strlen(greeting))) {
+        HotShutdown(hot);
         Tui_free(&state);
         return 1;
     }
     if (sessionMode) {
         const char *notice = "OpenCode session | tools denied | Enter sends | Clear is display-only | Ctrl-Q exits";
         if (!Tui_add(&state, notice, strlen(notice))) {
+            HotShutdown(hot);
             Tui_free(&state);
             return 1;
         }
     }
     SCREEN *screen = newterm(nullptr, stdout, stdin);
     if (screen == nullptr) {
+        HotShutdown(hot);
         Tui_free(&state);
         THROW("terminal initialization failed");
         return 1;
@@ -262,6 +221,13 @@ int main(int argc, char **argv) {
     signal(SIGTERM, stop);
     signal(SIGPIPE, SIG_IGN);
     bool ok = cbreak() != ERR && noecho() != ERR && keypad(stdscr, true) != ERR;
+    // Ctrl-Q is the application's quit key, not terminal XON. ncurses saved
+    // the original mode before this change and restores it in endwin().
+    struct termios mode;
+    if (ok && tcgetattr(STDIN_FILENO, &mode) == 0) {
+        mode.c_iflag &= ~(IXON | IXOFF);
+        ok = tcsetattr(STDIN_FILENO, TCSANOW, &mode) == 0;
+    }
     timeout(TUI_POLL_MS);
     mouseinterval(0);
     mmask_t mask = BUTTON1_PRESSED | BUTTON4_PRESSED;
@@ -274,6 +240,7 @@ int main(int argc, char **argv) {
     size_t capacity = 0;
     bool focused = true;
     bool sessionFailed = false;
+    bool updateRequested = false;
     while (ok && !stopped) {
         int completed = SessionBridge_poll(&bridge);
         if (completed) {
@@ -283,6 +250,25 @@ int main(int argc, char **argv) {
             ok = Tui_addStyled(&state, label, strlen(label), role | TEXT_STYLE_BOLD, false) &&
                  Tui_addStyled(&state, text, strlen(text), 0, completed > 0);
             sessionFailed = completed < 0;
+        }
+        if (updateRequested && !SessionBridge_isBusy(&bridge)) {
+            uint64_t before = Hot_get_generation(hot);
+            uint32_t loaded = 0;
+            bool updated = Primeagen_update(hot, updatePayload, updateChecksum, &loaded);
+            if (Hot_requiresRecovery(hot)) {
+                ok = false; // unresolved is not success/failure resolution; stop
+                break;
+            }
+            if (updated) {
+                view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
+                localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
+            }
+            char notice[192];
+            snprintf(notice, sizeof(notice), updated ? "Updated running CLI: generation %llu -> %llu. Resumed." : "Update rejected; running generation %llu retained. Resumed.",
+                     (unsigned long long) before, (unsigned long long) Hot_get_generation(hot));
+            ok = view != nullptr && localCommand != nullptr && Tui_add(&state, notice, strlen(notice));
+            updateRequested = false;
+            Tui_setDirty(&state, true);
         }
         int rows, columns;
         getmaxyx(stdscr, rows, columns);
@@ -306,7 +292,7 @@ int main(int argc, char **argv) {
             capacity = (size_t) columns + 1;
         }
         if (ok && Tui_isDirty(&state)) {
-            ok = draw(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, styles, capacity);
+            ok = view(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, styles, capacity);
             Tui_setDirty(&state, false);
         }
         if (!ok)
@@ -359,7 +345,7 @@ int main(int argc, char **argv) {
         else if (key == KEY_RESIZE)
             Tui_setDirty(&state, true);
         else if (focused && (key == '\n' || key == KEY_ENTER)) {
-            int action = command(&state, sessionMode);
+            int action = localCommand(&state, sessionMode);
             if (action != 0) {
                 if (action < 0)
                     ok = false;
@@ -368,8 +354,16 @@ int main(int argc, char **argv) {
                     stopped = 1;
                 } else if (action == TUI_COMMAND_QUIT)
                     stopped = 1;
+                else if (action == TUI_COMMAND_UPDATE) {
+                    const char *notice = hot != nullptr ? "Update requested: new submissions paused; waiting for active turn, then validate/resolve/continue." : "Update unavailable: run the primeagen launcher after sh cli/build.sh.";
+                    ok = Tui_add(&state, notice, strlen(notice));
+                    updateRequested = hot != nullptr;
+                    Tui_inputClear(&state);
+                }
                 continue;
             }
+            if (updateRequested)
+                continue;
             if (!sessionMode) {
                 const char *notice = "Not sent: disconnected. Use /connect first (existing Go login), then type your message. No local echo is a model reply.";
                 ok = Tui_add(&state, notice, strlen(notice));
@@ -394,6 +388,7 @@ int main(int argc, char **argv) {
     free(row);
     free(styles);
     Tui_free(&state);
+    HotShutdown(hot);
     if (ok && connectRequested)
         return connectHost(sessionHost, owo);
     if (!ok)
