@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <locale.h>
 
 ;;DEFINITION
 /* The C23 terminal preview owns ncurses screen admission and restoration, not an
@@ -34,6 +35,8 @@
  * OWNED STATE:
  *   static volatile sig_atomic_t stopped : signal-safe shutdown request only.
  *   main locals own Tui, SessionBridge, ncurses SCREEN and growable row buffer.
+ *   panel/selection/listWidth are resident presentation-only navigation values;
+ *   preview examples never become real model/session identities.
  *   sessionHost is a borrowed launcher-supplied path; no credentials are owned.
  * COLOR: draw() applies a host palette including code and error text,
  *   initialized only when has_colors(). A monochrome terminal falls back to the
@@ -51,6 +54,8 @@
  *   int main(int argc, char **argv)
  *     --owo / --help / --session-host / paired host --bridge-read/write fd admission;
  *     paired --update-payload/--update-checksum enable trusted local cold updates.
+ *     --list-width overrides the named list-column default. Ctrl-P/Ctrl-S choose
+ *     People/Servers, Ctrl-O returns to the existing OpenCode chat.
  *     tty/newterm; mouse/key/session polling; restore/free.
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
@@ -114,6 +119,8 @@ int main(int argc, char **argv) {
     const char *sessionHost = nullptr;
     const char *updatePayload = nullptr, *updateChecksum = nullptr;
     bool connectRequested = false;
+    int panel = PRIMEAGEN_PANEL_PEOPLE, selection = 0;
+    int listWidth = PRIMEAGEN_LIST_WIDTH_DEFAULT;
     int readFd = -1, writeFd = -1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--owo") == 0)
@@ -124,6 +131,15 @@ int main(int argc, char **argv) {
             updatePayload = argv[++i];
         else if (strcmp(argv[i], "--update-checksum") == 0 && i + 1 < argc)
             updateChecksum = argv[++i];
+        else if (strcmp(argv[i], "--list-width") == 0 && i + 1 < argc) {
+            char *end;
+            long value = strtol(argv[++i], &end, 10);
+            if (*end || value < 12 || value > 4096) {
+                THROW("list width must be 12..4096 terminal cells");
+                return 1;
+            }
+            listWidth = (int) value;
+        }
         else if ((strcmp(argv[i], "--bridge-read") == 0 || strcmp(argv[i], "--bridge-write") == 0) && i + 1 < argc) {
             bool reading = strcmp(argv[i], "--bridge-read") == 0;
             char *end;
@@ -138,7 +154,7 @@ int main(int argc, char **argv) {
                 writeFd = (int) value;
         }
         else if (strcmp(argv[i], "--help") == 0) {
-            puts("primeagen tui [--owo]: starts offline; /connect uses existing OpenCode Go login; /help; Ctrl-Q exits");
+            puts("primeagen tui [--owo] [--list-width CELLS]: offline three-column browser; Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode; /connect uses existing login; Ctrl-Q exits");
             return 0;
         } else {
             THROW("unknown TUI argument");
@@ -165,6 +181,7 @@ int main(int argc, char **argv) {
         return 1;
     HotModule *hot = nullptr;
     PrimeagenDrawFn view = draw;
+    PrimeagenPanelsFn panelsView = Primeagen_drawPanels;
     PrimeagenCommandFn localCommand = command;
     if (updatePayload != nullptr || updateChecksum != nullptr) {
         uint32_t loaded;
@@ -180,7 +197,8 @@ int main(int argc, char **argv) {
         }
         view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
         localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
-        if (view == nullptr || localCommand == nullptr) {
+        panelsView = (PrimeagenPanelsFn) Hot_get_symbol(hot, "Primeagen_drawPanels");
+        if (view == nullptr || localCommand == nullptr || panelsView == nullptr) {
             HotShutdown(hot);
             Tui_free(&state);
             return 1;
@@ -200,6 +218,7 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+    setlocale(LC_CTYPE, ""); // text symbols, not emoji; ASCII fallback if unavailable
     SCREEN *screen = newterm(nullptr, stdout, stdin);
     if (screen == nullptr) {
         HotShutdown(hot);
@@ -262,20 +281,23 @@ int main(int argc, char **argv) {
             if (updated) {
                 view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
                 localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
+                panelsView = (PrimeagenPanelsFn) Hot_get_symbol(hot, "Primeagen_drawPanels");
             }
             char notice[192];
             snprintf(notice, sizeof(notice), updated ? "Updated running CLI: generation %llu -> %llu. Resumed." : "Update rejected; running generation %llu retained. Resumed.",
                      (unsigned long long) before, (unsigned long long) Hot_get_generation(hot));
-            ok = view != nullptr && localCommand != nullptr && Tui_add(&state, notice, strlen(notice));
+            ok = view != nullptr && localCommand != nullptr && panelsView != nullptr && Tui_add(&state, notice, strlen(notice));
             updateRequested = false;
             Tui_setDirty(&state, true);
         }
         int rows, columns;
         getmaxyx(stdscr, rows, columns);
+        int chatLeft = Primeagen_chatLeft(columns, listWidth);
+        int chatColumns = columns - chatLeft;
         int oldRows, oldColumns;
         Tui_getSize(&state, &oldRows, &oldColumns);
-        if (oldRows != rows || oldColumns != columns)
-            ok = Tui_setSize(&state, rows, columns);
+        if (oldRows != rows || oldColumns != chatColumns)
+            ok = Tui_setSize(&state, rows, chatColumns);
         if ((size_t) columns + 1 > capacity) {
             char *next = realloc(row, (size_t) columns + 1);
             if (next == nullptr) {
@@ -292,7 +314,7 @@ int main(int argc, char **argv) {
             capacity = (size_t) columns + 1;
         }
         if (ok && Tui_isDirty(&state)) {
-            ok = view(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, styles, capacity);
+            ok = panelsView(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), panel, selection, listWidth, row, styles, capacity);
             Tui_setDirty(&state, false);
         }
         if (!ok)
@@ -300,6 +322,18 @@ int main(int argc, char **argv) {
         int key = getch();
         if (key == TUI_CTRL_Q)
             stopped = 1;
+        else if (key == 16 || key == 19 || key == 15) {
+            if (key == 16)
+                panel = PRIMEAGEN_PANEL_PEOPLE;
+            else if (key == 19)
+                panel = PRIMEAGEN_PANEL_SERVERS;
+            else {
+                panel = PRIMEAGEN_PANEL_PEOPLE;
+                selection = 0;
+                focused = true;
+            }
+            Tui_setDirty(&state, true);
+        }
         else if (key == KEY_MOUSE) {
             MEVENT event;
             if (getmouse(&event) != OK)
@@ -315,36 +349,45 @@ int main(int argc, char **argv) {
                 kind = TUI_MOUSE_CLICK;
             else
                 continue;
-            if (!sessionMode && kind == TUI_MOUSE_CLICK && event.y == rows - 3 && event.x >= 1 && event.x <= 10) {
+            if (kind == TUI_MOUSE_CLICK && Primeagen_panelsClick(event.x, event.y, rows, columns, listWidth, panel, selection, &panel, &selection)) {
+                focused = selection == 0;
+                Tui_setDirty(&state, true);
+                continue;
+            }
+            if (!sessionMode && selection == 0 && kind == TUI_MOUSE_CLICK && event.y == rows - 3 && event.x >= chatLeft + 1 && event.x <= chatLeft + 10) {
                 connectRequested = true;
                 stopped = 1;
                 continue;
             }
-            TuiMouseAction action = TuiMouse_dispatch(&state, event.x, event.y, kind);
+            if (event.x < chatLeft)
+                continue; // the list/rail never scroll the chat viewport
+            if (selection != 0 && kind != TUI_MOUSE_CLICK)
+                continue;
+            TuiMouseAction action = TuiMouse_dispatch(&state, event.x - chatLeft, event.y, kind);
             if (action == TUI_MOUSE_QUIT)
                 stopped = 1;
-            else if (action == TUI_MOUSE_CLEAR)
+            else if (action == TUI_MOUSE_CLEAR && selection == 0)
                 Tui_clear(&state);
-            else if (action == TUI_MOUSE_INPUT)
+            else if (action == TUI_MOUSE_INPUT && selection == 0)
                 focused = true;
             else if (kind == TUI_MOUSE_CLICK)
                 focused = false;
             Tui_setDirty(&state, true);
-        } else if (key == KEY_PPAGE)
+        } else if (key == KEY_PPAGE && selection == 0)
             Tui_scrollBy(&state, (int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_NPAGE)
+        else if (key == KEY_NPAGE && selection == 0)
             Tui_scrollBy(&state, -(int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_END)
+        else if (key == KEY_END && selection == 0)
             Tui_setScroll(&state, 0);
-        else if (key == TUI_CTRL_L)
+        else if (key == TUI_CTRL_L && selection == 0)
             Tui_clear(&state);
-        else if (key == '\t') {
+        else if (key == '\t' && selection == 0) {
             focused = true;
             Tui_setDirty(&state, true);
         }
         else if (key == KEY_RESIZE)
             Tui_setDirty(&state, true);
-        else if (focused && (key == '\n' || key == KEY_ENTER)) {
+        else if (focused && selection == 0 && (key == '\n' || key == KEY_ENTER)) {
             int action = localCommand(&state, sessionMode);
             if (action != 0) {
                 if (action < 0)
@@ -377,9 +420,9 @@ int main(int argc, char **argv) {
                  Tui_add(&state, Tui_getInput(&state), Tui_getInputLength(&state));
             if (ok)
                 Tui_inputClear(&state);
-        } else if (focused && (key == KEY_BACKSPACE || key == 127 || key == '\b'))
+        } else if (focused && selection == 0 && (key == KEY_BACKSPACE || key == 127 || key == '\b'))
             Tui_inputBackspace(&state);
-        else if (focused && key >= ' ' && key <= '~')
+        else if (focused && selection == 0 && key >= ' ' && key <= '~')
             ok = Tui_inputAddChar(&state, key);
     }
     SessionBridge_free(&bridge);
