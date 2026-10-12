@@ -13,8 +13,9 @@ tool action; native C23 workspace-confined read/list/create/write/edit/delete,
 explicitly approved unsandboxed Bash, configured search-program delegation;
 real Func compilation and separately
 approved artifact execution. That original `chat` mode uses our own agent loop.
-Optional `session` mode now uses OpenCode V2 as the agent engine through API
-Haven's actual EngineProvider/Harness job callbacks. Its login/model configuration
+Optional `session` mode now uses OpenCode V2 for **text-only generation**, with a
+Primeagen-owned propose/gate/execute loop through the existing native tools and
+API Haven's actual EngineProvider/Harness bridge callbacks. Its login/model configuration
 (including Go when configured) stays with OpenCode; Primeagen reads no auth files.
 
 This is an initial implementation, not production-ready. Offline owner evidence
@@ -32,11 +33,13 @@ that restores the terminal and launches the existing OpenCode session host on
 `opencode-go/deepseek-v4.1-flash`. Ordinary disconnected text is not sent or
 silently appended as a pretend answer. The frontend is C; this handoff still uses
 the Python host and is not completion of the native-runtime migration.
-Explicit `session` connects this same terminal to a dedicated OpenCode chat session,
-with retained server history and a turn whose progress streams as it happens (model
-prose, `thinking:` reasoning and tool activity appear while the turn runs; token-by-token
-streaming of an in-flight completion is not offered). Automated fake
-CLI/pipe owners prove local wiring, not live Go entitlement or permission enforcement.
+Explicit `session` connects this terminal to a host-controlled local conversation.
+OpenCode receives text-generation requests, never autonomous remote tool prompts.
+Optional narration and complete escaped tool proposals appear between model calls;
+history is retained locally for this run, not a saved OpenCode conversation.
+Offline owners prove local gating with real disposable native Bash/file actions.
+The initial opt-in live owner failed on HTTP 400 before a proposal; a separate
+diagnostic completed proposal/rejection/answer. Live availability remains unproven.
 
 Explicit `/update` now reloads native terminal rendering and local command code
 through Hotcwap, preserving resident draft/history and session pipes. Build the
@@ -137,7 +140,37 @@ sh cli/build.sh
 ./primeagen session --engine opencode --model PROVIDER/MODEL --owo
 ```
 
-Enter sends a turn and may consume your subscription/quota. A new dedicated session
+### Default: local execution gate
+
+Enter may consume your OpenCode subscription/quota. The terminal now uses
+`src/controlled_session.py`: text-only `/api/experimental/generate` returns one
+strict JSON proposal; Primeagen validates it, pauses at the native Tools approval
+callback, executes only when permitted, and returns the result to the model.
+No remote `/prompt`, `/shell` or permission reply is used by this path.
+
+**Inspection is automatic** for workspace read/list, except `.env` and `.env.*`
+reads. Bash, create/write/edit/delete and Func build/run **ask first**.
+The complete escaped action is displayed above the fixed **Yes / Always yes / No**
+bar. No starts no tool child and changes no file; the denied result is retained
+and the loop continues. Always yes remembers only that exact tool and arguments
+for this run; a different command asks again. There is no durable blanket grant.
+Read contents and tool results reach subsequent model prompts. Bash remains
+unsandboxed. Network search is not configured in this terminal mode; it rejects
+rather than silently borrowing OpenCode's remote tools. Read/list replace the
+remote glob/grep vocabulary in this initial slice.
+
+Human waits have no timeout; closing the terminal cancels the queued action.
+Generation has a 300-second request budget; native children have a 60-second
+budget and bounded pipes. Agent history defaults to 512 KiB and each turn to 16
+steps, with explicit exhaustion. OS argv limits may reject smaller transcripts.
+Optional `note` prose arrives between tool proposals, not token-by-token; no
+separate reasoning stream or saved remote conversation is offered. `/update`
+does not reload the Python gate—restart to adopt this change. `sh cli/build.sh`
+also builds the native tools now.
+
+### Legacy remote adapter (diagnostics only; not the terminal default)
+
+The retained diagnostic adapter's Enter sends a turn and may consume your subscription/quota. A new dedicated session
 is created only on the first Enter; never attach to the current coding session.
 Every session requests the default policy and checks the echoed rules before each
 turn: **inspection is automatic** (read/glob/grep), while **edits, shell, web
@@ -245,20 +278,19 @@ primeagen
 
 Running `./primeagen` with no arguments also opens the terminal. Enter `/connect`
 (or click it in the lower hint line), then type your message and press Enter.
-This uses your existing OpenCode Go connection and can consume Go quota; it
-creates a dedicated chat, never attaches to this coding session. If Go is not
+This uses your existing OpenCode Go connection for text generation and can consume
+Go quota; it never attaches to this coding session. If Go is not
 configured, connect **OpenCode Go** using OpenCode's own `/connect` first.
 Primeagen does not accept/store an API key here. The handoff starts a fresh
 terminal view; disconnected drafts are not transferred. `/help`, `/clear`
 (display only), `/update`, and `/quit` are local commands; unsupported slash commands are
 reported locally, never sent to the model. `/settings`, real server/channel session
 routing, token-delta streaming and Zen key entry are not implemented. Tool approval
-does exist: the connected session runs the default policy above and asks in the
-transcript before edits, shell and network actions.
+does exist: the default connected session uses the local execution gate above,
+not the unreliable legacy remote permission queue.
 
-Wheel-up, PgUp/PgDn, Up/Down and End scroll the transcript; PgUp/PgDn page and
-End returns to the tail. Wheel-down is not deliverable in this platform's ncurses
-(see the scrolling note above). Click the input
+Wheel-up/down and Up/Down scroll the transcript; End returns to the tail.
+Click the input
 line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter
 sends only after connection; disconnected input makes no model/tool call.
 Mouse reporting depends on the terminal.
@@ -320,7 +352,9 @@ at a time using strict JSON, for example:
 {"tool":"websearch","arguments":{"query":"C23 documentation"}}
 ```
 
-Every action requires a separate host/user approval, including read/list; unknown
+In original `chat` mode every action requires host/user approval, including read/list;
+the default terminal's controlled session automatically permits non-secret read/list.
+Unknown
 tags, extra keys and model-provided approval fields reject. Python remains the
 consent/provider/bounded-child host; actual file actions and exec delegation are C.
 Denial spawns no child and mutates nothing. Results/errors return to the existing
@@ -350,18 +384,18 @@ Registered mirrored `tests/primeagen/tools/*_test.py` owners compile/run strict 
 and ASan/UBSan tools; the shared fs C client and tagged-agent/consent owners use
 disposable storage. Allocation/OS failure injection, full leak accounting, crash
 recovery, hostile writers and other-platform proof remain gaps. The connected
-OpenCode session is also no longer deny-all: it runs the remote default policy and
-approval bridge described above, which is OpenCode's enforcement, not these C
-adapters. Those local adapters stay on the explicit `chat` path and are not
-reachable from the session.
+legacy remote OpenCode session is also no longer deny-all: its default policy and
+approval bridge remain diagnostic-only and unreliable. The default terminal now
+uses these local C adapters behind the host-controlled execution gate instead.
 
 ## Scope and Limitations
 
 - First model protocol is strict JSON **text**, not native structured tool calls;
   providers/models that do not follow it reject. Our own `chat` loop has no
   streaming, retries, native MCP, multi-agent routing or GUI. Only optional
-  OpenCode mode retains remote sessions and streams a turn's progress; our
-  prototype `chat` has no durable session storage and no token-delta streaming.
+  legacy diagnostic OpenCode adapter retains remote sessions. The default
+  controlled terminal has local run-only history and between-step narration,
+  no durable session storage, separate reasoning or token-delta streaming.
 - Local means an OpenAI-compatible loopback server, not an embedded model or
   native Ollama protocol. Hosted transport verifies HTTPS and refuses redirects.
 - The Python host transport is an explicit standalone consumer adapter. API Haven
