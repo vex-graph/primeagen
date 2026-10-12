@@ -94,6 +94,12 @@ never a local re-execution; coloring stays the language layer's job. Transcript
 scrolling is wheel-up/down (the fifth-button bit is registered explicitly because
 this SDK's ncurses is MOUSE_VERSION 1 and does not declare `BUTTON5_PRESSED`),
 Up/Down one row, PgUp/PgDn one page and End to tail.
+Timing is an idle watchdog, not a total budget. The Python host restarts its
+window whenever the newest remote message changes and the bridge restarts its own
+on every consumed frame, so a multi-tool turn is bounded by remote silence rather
+than by how long the work takes; the human approval wait is excluded from both.
+The newest-message read keeps its own bounded budget (8 MiB) separate from the
+frame caps because tool arguments carry real file content.
 Cold projections redact transcript buffers and summarize the borrowed Haven driver,
 whose current class has no bounded projection; never dump prompt/response values.
 Remote history remains with OpenCode; local cancellation attempts remote interrupt
