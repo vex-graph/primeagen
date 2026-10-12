@@ -71,6 +71,17 @@ uploaded by default, and is not a secure store or hostile-directory sandbox.
 
 ### Explicit Tool Consent Law
 
+The terminal's explicit `/update` consumes Hotcwap `Hot_updateCold` and trusted
+local build SHA256 references. Only view/command code is reloadable; terminal,
+Tui/session pipes, approvals and remote permission configuration stay resident.
+New prompts pause until an existing turn finishes and candidate admission resolves.
+Failure retains running code/state; unresolved disk rollback stops the host.
+Native candidates/constructors and stable parent directories are trusted, never
+model-authorized code. No network download, broad native agent update, server/role
+implementation, crash recovery or sandbox is implied. The named offline owner is
+`tests/primeagen/cli/update_test.py`, with headless cells and scripted PTY evidence;
+appearance and live remote session policy remain separate proof.
+
 Model output is untrusted data, never authorization. Every read, Func build and
 artifact run needs separate host/user approval. Denial performs no operation.
 Build is not run permission. Only session-created artifact identities can run;
