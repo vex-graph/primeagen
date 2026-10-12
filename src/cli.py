@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI-only R5 entry. No network until chat is explicitly selected.
 
-No GUI, implicit install, unattended approvals, arbitrary shell or hidden artifact
+No GUI, implicit install, unattended approvals, unapproved shell or hidden artifact
 execution. Provider/model are explicit and credentials are read from environment.
 """
 """
@@ -63,6 +63,8 @@ def main():
     parser.add_argument("--base-url")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--func", type=Path)
+    parser.add_argument("--websearch-tool", type=Path, help="trusted search executable accepting one query argument")
+    parser.add_argument("--tool-byte-cap", type=int, default=128 * 1024)
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--max-steps", type=int, default=16)
     args = parser.parse_args()
@@ -71,6 +73,7 @@ def main():
         print("native request binding:", "present" if (root / ".build/request").is_file() else "missing (python3 build.py)")
         func = args.func or root.parent / "func/func"
         print("Func launcher:", "present" if func.is_file() else "missing (set --func)")
+        print("Native tools:", "present" if (root / ".build/tools").is_file() else "missing (sh tools/build.sh)")
         print("Providers: openai / anthropic / local. Live integration unproven until explicitly exercised.")
         return 0
     if not args.provider or not args.model:
@@ -79,7 +82,8 @@ def main():
     try:
         load_env(Path(__file__).resolve().parent.parent / ".env")
         provider = Provider(args.provider, args.model, args.base_url, args.timeout, owo=args.owo)
-        tools = Tools(args.workspace, approve, args.func, args.timeout)
+        tools = Tools(args.workspace, approve, args.func, args.timeout,
+                      websearch=args.websearch_tool, byte_cap=args.tool_byte_cap)
         agent = Agent(provider, tools, args.max_steps)
         print("Primeagen · /new resets history · /quit exits · tools always ask permission")
         while True:
