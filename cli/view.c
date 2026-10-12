@@ -171,7 +171,7 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     size_t offset = length > width ? length - width : 0;
     if (selection == 0)
         mvaddnstr(rows - 2, left + 2, Tui_getInput(state) + offset, (int) width);
-    const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | tools denied | Enter sends") : (owo ? "OwO | disconnected | /connect uses Go login" : "Disconnected | /connect uses OpenCode Go login");
+    const char *status = sessionMode ? (busy ? "OpenCode working | Ctrl-Q cancels locally" : "OpenCode chat | inspect auto | edit/shell ask | Enter sends") : (owo ? "OwO | disconnected | /connect uses Go login" : "Disconnected | /connect uses OpenCode Go login");
     attron(COLOR_PAIR(VIEW_STATUS) | A_DIM);
     mvaddnstr(rows - 1, left, selection == 0 ? status : "Offline preview | Ctrl-P People | Ctrl-S Servers", columns - 1);
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
