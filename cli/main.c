@@ -56,6 +56,9 @@
  *     paired --update-payload/--update-checksum enable trusted local cold updates.
  *     --list-width overrides the named list-column default. Ctrl-P/Ctrl-S choose
  *     People/Servers, Ctrl-O returns to the existing OpenCode chat.
+ *     --select-text / Ctrl-T disables application mouse reporting and temporarily
+ *     opens the current chat full-width for terminal-native drag selection/copy.
+ *     Terminal owns selection/clipboard; switching restores panel navigation.
  *     tty/newterm; mouse/key/session polling; restore/free.
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
@@ -79,6 +82,7 @@
 #define TUI_POLL_MS 100 /* Shutdown checks between idle terminal reads. */
 #define TUI_CTRL_Q 17
 #define TUI_CTRL_L 12
+#define TUI_CTRL_T 20
 #define TUI_COMMAND_MESSAGE 1
 #define TUI_COMMAND_CONNECT 2
 #define TUI_COMMAND_QUIT 3
@@ -116,6 +120,7 @@ static bool draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy
 
 int main(int argc, char **argv) {
     bool owo = false;
+    bool selectText = false;
     const char *sessionHost = nullptr;
     const char *updatePayload = nullptr, *updateChecksum = nullptr;
     bool connectRequested = false;
@@ -125,6 +130,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--owo") == 0)
             owo = true;
+        else if (strcmp(argv[i], "--select-text") == 0)
+            selectText = true;
         else if (strcmp(argv[i], "--session-host") == 0 && i + 1 < argc)
             sessionHost = argv[++i];
         else if (strcmp(argv[i], "--update-payload") == 0 && i + 1 < argc)
@@ -154,7 +161,7 @@ int main(int argc, char **argv) {
                 writeFd = (int) value;
         }
         else if (strcmp(argv[i], "--help") == 0) {
-            puts("primeagen tui [--owo] [--list-width CELLS]: offline three-column browser; Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode; /connect uses existing login; Ctrl-Q exits");
+            puts("primeagen tui [--owo] [--list-width CELLS] [--select-text]: offline three-column browser; Ctrl-T toggles native text selection; Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode; /connect uses existing login; Ctrl-Q exits");
             return 0;
         } else {
             THROW("unknown TUI argument");
@@ -253,7 +260,7 @@ int main(int argc, char **argv) {
 #ifdef BUTTON5_PRESSED
     mask |= BUTTON5_PRESSED;
 #endif
-    mousemask(mask, nullptr);
+    mousemask(selectText ? 0 : mask, nullptr);
     char *row = nullptr;
     uint8_t *styles = nullptr;
     size_t capacity = 0;
@@ -292,7 +299,7 @@ int main(int argc, char **argv) {
         }
         int rows, columns;
         getmaxyx(stdscr, rows, columns);
-        int chatLeft = Primeagen_chatLeft(columns, listWidth);
+        int chatLeft = selectText ? 0 : Primeagen_chatLeft(columns, listWidth);
         int chatColumns = columns - chatLeft;
         int oldRows, oldColumns;
         Tui_getSize(&state, &oldRows, &oldColumns);
@@ -314,7 +321,18 @@ int main(int argc, char **argv) {
             capacity = (size_t) columns + 1;
         }
         if (ok && Tui_isDirty(&state)) {
-            ok = panelsView(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), panel, selection, listWidth, row, styles, capacity);
+            if (selectText) {
+                ok = view(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), row, styles, capacity);
+                if (ok && rows >= TUI_MIN_ROWS && columns >= TUI_MIN_COLUMNS) {
+                    int caretY, caretX;
+                    getyx(stdscr, caretY, caretX);
+                    mvhline(rows - 1, 0, ' ', columns - 1);
+                    mvaddnstr(rows - 1, 0, "Select text: drag, then terminal Copy | Ctrl-T returns", columns - 1);
+                    move(caretY, caretX);
+                    ok = refresh() != ERR;
+                }
+            } else
+                ok = panelsView(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), panel, selection, listWidth, row, styles, capacity);
             Tui_setDirty(&state, false);
         }
         if (!ok)
@@ -322,6 +340,11 @@ int main(int argc, char **argv) {
         int key = getch();
         if (key == TUI_CTRL_Q)
             stopped = 1;
+        else if (key == TUI_CTRL_T) {
+            selectText = !selectText;
+            mousemask(selectText ? 0 : mask, nullptr);
+            Tui_setDirty(&state, true);
+        }
         else if (key == 16 || key == 19 || key == 15) {
             if (key == 16)
                 panel = PRIMEAGEN_PANEL_PEOPLE;
@@ -338,6 +361,8 @@ int main(int argc, char **argv) {
             MEVENT event;
             if (getmouse(&event) != OK)
                 continue;
+            if (selectText)
+                continue; // terminal, not application, owns selection/copy
             TuiMouseKind kind;
             if (event.bstate & BUTTON4_PRESSED)
                 kind = TUI_MOUSE_WHEEL_UP;
@@ -373,11 +398,11 @@ int main(int argc, char **argv) {
             else if (kind == TUI_MOUSE_CLICK)
                 focused = false;
             Tui_setDirty(&state, true);
-        } else if (key == KEY_PPAGE && selection == 0)
+        } else if (key == KEY_PPAGE && (selection == 0 || selectText))
             Tui_scrollBy(&state, (int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_NPAGE && selection == 0)
+        else if (key == KEY_NPAGE && (selection == 0 || selectText))
             Tui_scrollBy(&state, -(int64_t) Tui_getViewportHeight(&state));
-        else if (key == KEY_END && selection == 0)
+        else if (key == KEY_END && (selection == 0 || selectText))
             Tui_setScroll(&state, 0);
         else if (key == TUI_CTRL_L && selection == 0)
             Tui_clear(&state);
