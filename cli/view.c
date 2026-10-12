@@ -70,7 +70,7 @@ int Primeagen_command(Tui *state, bool sessionMode) {
     }
     const char *notice;
     if (strcmp(input, "/help") == 0)
-        notice = "/connect: existing OpenCode Go login | /update: local built CLI, pause/resolve/continue | /clear: display only | /quit: exit. Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode. Example entries are previews; settings/roles are unfinished.";
+        notice = "/connect: existing OpenCode Go login | /update: local built CLI, pause/resolve/continue | /clear: display only | /quit: exit. Ctrl-T: terminal text selection; Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode. Example entries are previews; settings/roles are unfinished.";
     else if (strcmp(input, "/connect") == 0)
         notice = "Already connected to OpenCode. Enter sends; remote history is retained. Tools remain denied.";
     else
@@ -134,7 +134,7 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     }
     mvhline(rows - 4, left, ACS_HLINE, columns);
     attron(COLOR_PAIR(VIEW_STATUS) | A_DIM);
-    mvaddnstr(rows - 3, left + 1, sessionMode ? "/help | /update | PgUp/PgDn scroll | Ctrl-Q quit" : "/connect (click here) | /help | /update | Ctrl-Q quit", columns - 2);
+    mvaddnstr(rows - 3, left + 1, sessionMode ? "Ctrl-T select text | /help | /update | Ctrl-Q quit" : "/connect (click here) | Ctrl-T select | /help | Ctrl-Q quit", columns - 2);
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
     attron(COLOR_PAIR(VIEW_INPUT) | A_BOLD);
     mvaddstr(rows - 2, left, "> ");
