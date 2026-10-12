@@ -147,9 +147,11 @@ is denied. When a request arrives the transcript shows
 accepted while it is pending. The local adapter forwards your decision and owns no
 rule itself — OpenCode enforces it and owns any saved "always" approval, so a
 configured deny always wins. Approvals cannot be granted by the model, and a
-pending question never expires the model deadline. Trusted server/configuration/
-plugins are required: echoed rules and fake tests do not prove live server policy
-enforcement or sandboxing. Only one bounded request is shown at a time.
+pending question never expires the model deadline; requests are polled for the
+whole turn, so one raised mid-turn appears as soon as it happens. Trusted
+server/configuration/plugins are required: echoed rules and fake tests do not
+prove live server policy enforcement or sandboxing. Only one bounded request is
+shown at a time.
 
 **The turn is a stream, not one lump.** Sending shows your prompt, then the turn
 unfolds as it happens:
@@ -201,15 +203,19 @@ answers arrive after completion; tool activity is reported as `read:`/`edit:`/
 `shell:` lines rather than executed locally. Clear/Ctrl-L changes the display
 only, not history. Ctrl-Q closes the local worker and attempts remote
 interruption; interruption is best effort, so remote work may outlive exit.
-Remote history remains on OpenCode. Failures poison the bridge: exit/relaunch
-rather than attribute a late reply to a new prompt. Per-turn bounds are 180
+Remote history remains on OpenCode. Per-turn bounds are 300
 seconds of remote **silence** (a long multi-tool turn is expected — every streamed
-tool line restarts the clock, and your approval wait is excluded), 16 KiB request
-framing, 64 KiB reply framing, a separate 8 MiB bounded read for the newest
-message page (tool arguments carry real file content) and the 200 newest remote
-messages. Exhaustion still fails explicitly, never silently truncates. Broader
-provider/subscription coverage, appearance, full launcher PTY lifecycle and
-macOS 14 runtime evidence remain gaps. **Codex App Server is not implemented yet.**
+tool line restarts the clock, and your approval wait is excluded), a 25-second
+bounded read for the newest message page (a slow page is retried, not fatal), 16
+KiB request framing, 64 KiB reply framing, a separate 8 MiB bound on that page
+(tool arguments carry real file content) and the 200 newest remote messages.
+When a turn does fail, the transcript prints one classified `session error: …`
+line before closing — without it a failed turn is indistinguishable from a dead
+server. A failed session is closed rather than reused: Enter explains that and
+Ctrl-Q plus relaunch reconnects. Exhaustion still fails explicitly, never
+silently truncates. Broader provider/subscription coverage, appearance, full
+launcher PTY lifecycle and macOS 14 runtime evidence remain gaps.
+**Codex App Server is not implemented yet.**
 
 The user-authorized native-Haven/host answer smoke passed on
 `opencode-go/deepseek-v4.1-flash` and included canonical OwO guidance. This narrow

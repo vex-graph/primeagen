@@ -104,8 +104,12 @@ Timing is an idle watchdog, not a total budget. The Python host restarts its
 window whenever the newest remote message changes and the bridge restarts its own
 on every consumed frame, so a multi-tool turn is bounded by remote silence rather
 than by how long the work takes; the human approval wait is excluded from both.
-The newest-message read keeps its own bounded budget (8 MiB) separate from the
-frame caps because tool arguments carry real file content.
+Pending approvals are polled for the whole turn, not only while the prompt message
+is off the page, because the agent blocks on a request wherever it sits in the
+turn. A slow newest-message read is retried rather than fatal (it has its own
+bounded budget separate from the frame caps, because tool arguments carry real
+file content), and a failed turn prints one classified `session error: ...` line
+before the wire closes.
 Cold projections redact transcript buffers and summarize the borrowed Haven driver,
 whose current class has no bounded projection; never dump prompt/response values.
 Remote history remains with OpenCode; local cancellation attempts remote interrupt
