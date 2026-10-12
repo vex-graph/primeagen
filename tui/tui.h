@@ -46,8 +46,10 @@ Tui Tui_2(size_t inputCapacity, size_t entryCapacity);
 #define Tui(...) TUI_JOIN(Tui_, TUI_ARITY(__VA_ARGS__))(__VA_ARGS__)
 #define Tui_zero() Tui_0()
 
-/* Add copies/sanitizes a live span: ASCII/newlines survive; controls and
- * non-ASCII bytes render as escapes. Growth is cold and fallible. No row or input
+/* Add copies/sanitizes a live span: safe UTF-8/newlines survive; malformed bytes,
+ * terminal controls and bidi overrides render as escapes. Wrap uses wcwidth under
+ * stable host LC_CTYPE, never splits a scalar; no full grapheme shaping. Input
+ * editing remains ASCII. Growth is cold and fallible. No row or input
  * pointer escapes a mutation except the explicitly borrowed getInput view. */
 bool Tui_add(Tui *self, const char *text, size_t length);
 /* Sanitize first, then optional Markdown; baseStyle contains host flags only.
@@ -78,6 +80,8 @@ size_t Tui_getInputCapacity(const Tui *self);
 size_t Tui_getScroll(const Tui *self);
 size_t Tui_getViewportHeight(const Tui *self);
 size_t Tui_getViewportWidth(const Tui *self);
+/* Sufficient byte capacity for any current row, including combining sequences. */
+size_t Tui_getRowCapacity(const Tui *self);
 size_t Tui_getVisualRowCount(const Tui *self);
 size_t Tui_getFirstVisibleRow(const Tui *self);
 bool Tui_copyRow(const Tui *self, size_t rowIndex, char *dest, size_t cap, bool *outTruncated);

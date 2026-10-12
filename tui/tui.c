@@ -1,5 +1,6 @@
 #include "tui/tui.h"
 #include "tui/markdown.h"
+#include "tui/utf8.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 #include "annotation/intention.h"
@@ -24,14 +25,16 @@
  * buffers. Transcript bytes are made terminal-safe at admission, so rendering
  * never executes escape sequences. Wrapping is derived from current terminal-cell
  * width, not a guessed fixed screen size. Following the tail and reading older
- * output use visible bytes after optional cold Markdown removal; parallel
+ * output use Unicode scalar cell widths after optional cold Markdown removal; parallel
  * host-owned cell flags carry formatting and speaker styles, never ANSI strings.
  * output are distinct states: appends preserve a scrolled viewport's old content.
  *
  * This preview owns ordinary display buffers, not an ecosystem allocator or
  * persistent history backend. Shallow copying a live Tui is outside the contract.
  * No JSON parser is duplicated: cold structure projection uses Vexspoke's actual
- * Json_writeString for the quoted input field. Unicode cell editing and provider
+ * Json_writeString for the quoted input field. UTF-8 transcript display preserves
+ * scalars and uses the host's stable locale/wcwidth. Full grapheme/ZWJ shaping,
+ * Unicode input editing and provider
  * integration are separate future work, not inferred from the ncurses frontend.
  */
 
@@ -58,7 +61,7 @@
  * SLOT RECORD (behaviorless TuiEntry, owned only by Tui):
  * ----------------------------------------------------------------------------
  *   TuiEntry {
- *     char *text;              // owned terminal-safe ASCII/newline bytes
+ *     char *text;              // owned terminal-safe UTF-8/newline bytes
  *     uint8_t *styles;         // owned per-visible-byte flags plus terminator
  *     size_t length;           // byte extent excluding terminator
  *   }
@@ -96,6 +99,7 @@
  *   - size_t Tui_getCount / getCapacity / getInputLength / getInputCapacity /
  *            getScroll / getViewportHeight / getViewportWidth /
  *            getVisualRowCount / getFirstVisibleRow(const Tui *self)
+ *   - size_t Tui_getRowCapacity(const Tui *self): max entry byte length plus NUL
  *   - const char *Tui_getInput(const Tui *self)
  *
  * Projections:
@@ -114,7 +118,7 @@
  *
  * Private static helpers:
  *   - reject(reason) / growth(current, needed, elementSize, dest)
- *   - wrappedRows(length, width)
+ *   - rowEnd(text,start,end,width): whole UTF-8 scalars wrapped by terminal cells
  *   - format(dest, cap, outTruncated, pattern, ...)
  *
  * CONSTRUCTION / FAILURE / OWNERSHIP CONTRACT:
@@ -218,7 +222,7 @@ bool Tui_inputReserve(Tui *self, size_t capacity) {
     return true;
 }
 
-/* Sanitize before publishing: even ESC, NUL and UTF-8 bytes are inert display. */
+/* Preserve valid Unicode scalars; escape malformed bytes and terminal controls. */
 bool Tui_add(Tui *self, const char *text, size_t length) {
     return Tui_addStyled(self, text, length, 0, false);
 }
@@ -234,15 +238,20 @@ bool Tui_addStyled(Tui *self, const char *text, size_t length, uint8_t baseStyle
         return reject("transcript allocation failed");
     static const char HEX[] = "0123456789abcdef";
     size_t used = 0;
-    for (size_t i = 0; i < length; ++i) {
+    for (size_t i = 0; i < length;) {
         unsigned char c = (unsigned char) text[i];
-        if (c == '\n' || (c >= ' ' && c <= '~'))
-            copy[used++] = (char) c;
-        else {
+        uint32_t scalar;
+        size_t bytes = TuiUtf8_decode(text + i, length - i, &scalar);
+        if (bytes != 0 && TuiUtf8_safe(scalar)) {
+            memcpy(copy + used, text + i, bytes);
+            used += bytes;
+            i += bytes;
+        } else {
             copy[used++] = '\\';
             copy[used++] = 'x';
             copy[used++] = HEX[c >> 4];
             copy[used++] = HEX[c & 15];
+            ++i;
         }
     }
     copy[used] = '\0';
@@ -423,8 +432,32 @@ size_t Tui_getScroll(const Tui *self) { return self == nullptr ? 0 : (*self).scr
 size_t Tui_getViewportHeight(const Tui *self) { return self == nullptr || (*self).rows < TUI_MIN_ROWS ? 0 : (size_t) ((*self).rows - TUI_CHROME_ROWS); }
 size_t Tui_getViewportWidth(const Tui *self) { return self == nullptr || (*self).columns < TUI_MIN_COLUMNS ? 0 : (size_t) ((*self).columns - 2); }
 
-static size_t wrappedRows(size_t length, size_t width) {
-    return length == 0 ? 1 : length / width + (length % width != 0);
+size_t Tui_getRowCapacity(const Tui *self) {
+    size_t capacity = 1;
+    if (self == nullptr)
+        return capacity;
+    for (size_t i = 0; i < (*self).count; ++i) {
+        const TuiEntry *entry = &(*self).entries[i];
+        if ((*entry).length + 1 > capacity)
+            capacity = (*entry).length + 1;
+    }
+    return capacity;
+}
+
+static size_t rowEnd(const char *text, size_t start, size_t end, size_t width) {
+    size_t at = start, cells = 0;
+    while (at < end) {
+        uint32_t scalar;
+        size_t bytes = TuiUtf8_decode(text + at, end - at, &scalar);
+        if (bytes == 0)
+            break; // cold admission guarantees valid display bytes
+        size_t nextCells = TuiUtf8_width(scalar);
+        if (nextCells > width - cells && at != start)
+            break;
+        cells += nextCells;
+        at += bytes;
+    }
+    return at;
 }
 
 /* Measure logical lines and wrap chunks without allocating a flattened copy. */
@@ -438,10 +471,13 @@ size_t Tui_getVisualRowCount(const Tui *self) {
         size_t start = 0;
         for (size_t at = 0; at <= (*entry).length; ++at)
             if (at == (*entry).length || (*entry).text[at] == '\n') {
-                size_t rows = wrappedRows(at - start, width);
-                if (rows > SIZE_MAX - total)
-                    return SIZE_MAX;
-                total += rows;
+                size_t next = start;
+                do {
+                    if (total == SIZE_MAX)
+                        return SIZE_MAX;
+                    ++total;
+                    next = rowEnd((*entry).text, next, at, width);
+                } while (next < at);
                 start = at + 1;
             }
     }
@@ -481,17 +517,27 @@ bool Tui_copyStyledRow(const Tui *self, size_t rowIndex, char *dest, uint8_t *st
         size_t start = 0;
         for (size_t at = 0; at <= (*entry).length; ++at)
             if (at == (*entry).length || (*entry).text[at] == '\n') {
-                size_t length = at - start;
-                size_t rows = wrappedRows(length, width);
-                if (rowIndex < rows) {
-                    size_t offset = rowIndex * width;
-                    size_t remaining = length - offset;
-                    size_t count = remaining < width ? remaining : width;
-                    size_t copied = count < cap - 1 ? count : cap - 1;
-                    memcpy(dest, (*entry).text + start + offset, copied);
+                size_t next = start;
+                do {
+                    size_t end = rowEnd((*entry).text, next, at, width);
+                    if (rowIndex != 0) {
+                        --rowIndex;
+                        next = end;
+                        continue;
+                    }
+                    size_t count = end - next;
+                    size_t copied = 0;
+                    while (copied < count) {
+                        uint32_t scalar;
+                        size_t bytes = TuiUtf8_decode((*entry).text + next + copied, count - copied, &scalar);
+                        if (bytes > cap - 1 - copied)
+                            break;
+                        copied += bytes;
+                    }
+                    memcpy(dest, (*entry).text + next, copied);
                     dest[copied] = '\0';
                     if (styles != nullptr) {
-                        memcpy(styles, (*entry).styles + start + offset, copied);
+                        memcpy(styles, (*entry).styles + next, copied);
                         styles[copied] = 0;
                     }
                     if (copied != count) {
@@ -500,8 +546,7 @@ bool Tui_copyStyledRow(const Tui *self, size_t rowIndex, char *dest, uint8_t *st
                         return reject("row projection truncated");
                     }
                     return true;
-                }
-                rowIndex -= rows;
+                } while (next < at);
                 start = at + 1;
             }
     }
