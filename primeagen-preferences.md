@@ -65,7 +65,29 @@ compact prose does not change remote messages, and fenced code whitespace remain
 literal. The flat subset and emphasis fallback do not imply CommonMark/full Unicode shaping
 or appearance acceptance. Styling owns no transport, credentials or permission.
 
-Explicit `session --engine opencode` consumes API Haven's existing EngineProvider
+The default `session --engine opencode` terminal now selects
+`src/controlled_session.py`: OpenCode's official text-only
+`/api/experimental/generate` supplies strict JSON proposals without remote tools.
+Primeagen's existing Agent/Tools loop validates each action and stalls before
+native child creation. Workspace read/list inspection is automatic except `.env`
+and `.env.*`; every other available action asks. Yes approves once; Always yes
+remembers exact tool/arguments for this process only; No retains denial and
+continues. Complete escaped arguments precede the existing fixed approval bar.
+Model content cannot supply human decisions. Malformed control is fatal; EOF
+cancels queued work without execution. History is local/run-only, optional prose
+arrives between steps, and generation/children have separate finite budgets.
+No remote session prompt, shell or permission-reply endpoint is used by this
+default. Search is unconfigured and rejects, not a remote-tool fallback.
+This consumes the native SessionBridge/Harness callbacks without moving their
+ownership. Existing unsandboxed Bash/stable-workspace/tool lifetime constraints
+below still apply. Default local gate owner tests prove native disposable
+execution and denial; initial live generation owner failed HTTP400 before a
+proposal, while a separate diagnostic passed proposal/reject/continuation.
+Availability, provider breadth and visual acceptance remain gaps.
+
+The following remote adapter description is legacy diagnostic scope, not the
+public terminal default. Its consent failure is retained, never promoted away.
+The legacy adapter consumes API Haven's existing EngineProvider
 and Harness_run/poll/cancel contracts through a native SessionBridge. The standalone
 Python host invokes installed OpenCode V2's official API CLI as a bounded tool;
 OpenCode owns authentication, provider/model selection and remote agent execution.
