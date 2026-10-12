@@ -194,6 +194,8 @@ def launch(owo, model):
         os.close(response_write)
         request_read = response_write = -1
         argv = [str(ROOT / ".build/tui"), "--bridge-read", str(response_read), "--bridge-write", str(request_write)]
+        argv += ["--update-payload", str(ROOT / ".build/payload"),
+                 "--update-checksum", str(ROOT / ".build/cli_view.sha256")]
         if owo:
             argv += ["--owo"]
         terminal = subprocess.Popen(argv, pass_fds=(response_read, request_write))
