@@ -140,7 +140,7 @@ class Tools:
                 argv += [str(self.websearch), arguments["query"]]
             try:
                 return run(argv, data=data, timeout=self.timeout, cap=self.byte_cap).decode("utf-8")
-            except ValueError as error:
+            except (ValueError, TimeoutError) as error:
                 cleanup = "; process-group cleanup refused; descendants unresolved" if "process-group cleanup refused" in str(error) else ""
                 raise ValueError(f"native {name} rejected, failed, timed out or would truncate; completed side effects are not rolled back{cleanup}") from error
         if name == "func_build":

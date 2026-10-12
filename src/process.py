@@ -38,14 +38,20 @@ DEFAULT_TIMEOUT = 60.0
 DEFAULT_OUTPUT_CAP = 1024 * 1024
 
 
-def run(argv, *, data=b"", timeout=DEFAULT_TIMEOUT, cap=DEFAULT_OUTPUT_CAP, cwd=None):
-    """Return stdout bytes only on exit zero; reject timeout/overflow/nonzero."""
+def run(argv, *, data=b"", timeout=DEFAULT_TIMEOUT, cap=DEFAULT_OUTPUT_CAP, cwd=None, allowStderr=False):
+    """Return stdout bytes only on exit zero; reject timeout/overflow/nonzero.
+
+    `allowStderr` is for callers whose contract is the child's stdout alone (the
+    official CLI's JSON reply), where unrelated diagnostics on stderr are noise
+    rather than a failure. Stderr is still bounded and never surfaced."""
     if not argv or not all(isinstance(item, str) and item and "\0" not in item for item in argv):
         raise ValueError("invalid literal argument vector")
     if not math.isfinite(timeout) or timeout <= 0 or cap <= 0:
         raise ValueError("invalid child budget")
     if not isinstance(data, bytes) or len(data) > DEFAULT_OUTPUT_CAP:
         raise ValueError("child input exceeds safety limit")
+    if type(allowStderr) is not bool:
+        raise ValueError("invalid diagnostics policy")
     child = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, start_new_session=True, cwd=cwd)
     try:
@@ -64,7 +70,7 @@ def run(argv, *, data=b"", timeout=DEFAULT_TIMEOUT, cap=DEFAULT_OUTPUT_CAP, cwd=
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise ValueError("child deadline exceeded")
+                    raise TimeoutError("child deadline exceeded")
                 for key, events in selector.select(min(remaining, 0.1)):
                     stream = key.fileobj
                     if events & selectors.EVENT_WRITE:
@@ -91,7 +97,7 @@ def run(argv, *, data=b"", timeout=DEFAULT_TIMEOUT, cap=DEFAULT_OUTPUT_CAP, cwd=
             if code:
                 # Untrusted errors may contain terminal escapes or secrets.
                 raise ValueError(f"child failed (exit {code})")
-            if error:
+            if error and not allowStderr:
                 raise ValueError("child emitted unexpected diagnostics")
             return bytes(output)
     except BaseException as error:
@@ -110,7 +116,7 @@ def run(argv, *, data=b"", timeout=DEFAULT_TIMEOUT, cap=DEFAULT_OUTPUT_CAP, cwd=
             raise ValueError(f"{error}; process-group cleanup refused") from error
         child.wait(timeout=5)
         if isinstance(error, subprocess.TimeoutExpired):
-            raise ValueError("child deadline exceeded") from error
+            raise TimeoutError("child deadline exceeded") from error
         raise
     finally:
         # Do not use Popen.__exit__: its implicit wait is unbounded if the host
