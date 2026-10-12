@@ -60,7 +60,7 @@ compact to one while fenced code spaces and blank lines stay literal. Terminal
 control bytes remain escaped, not executable. Strict/sanitized numeric and
 headless ncurses owners check visible bytes and actual cell attributes, not
 interactive appearance. This is a flat subset, not CommonMark: nested inline
-styles, links, tables, Unicode cell layout and syntax highlighting are not offered.
+styles, links, tables, full Unicode grapheme shaping and syntax highlighting are not offered.
 
 ## Inspiration and name
 
@@ -190,6 +190,15 @@ command (for example Cmd-C on macOS). Ctrl-T returns to the three-column browser
 `primeagen tui --select-text` starts in that mode. Selection/clipboard behavior
 belongs to your terminal; this is not an application-owned selection buffer or
 automatic clipboard write. New output or scrolling may invalidate a selection.
+Answers now travel as UTF-8 JSON from the host and render through wide ncurses
+cells, including emoji, accented letters and CJK. UTF-16 surrogate pairs in
+provider JSON are decoded by Python before the native reply is emitted; malformed
+surrogates reject rather than emitting invalid UTF-8. Transcript wrapping counts
+terminal cells, not bytes, and never splits a UTF-8 scalar. Invalid bytes, terminal
+controls and bidi overrides remain escaped. Input editing is still printable
+ASCII; full grapheme/ZWJ emoji shaping and font-width agreement remain gaps.
+This fixes the Primeagen reply path, not the shared native JSON parser's separate
+BMP-only escape-decoder limitation.
 
 `sh install-command.sh` links this checkout's shell launcher into `~/.local/bin`
 without overwriting an existing command or editing shell configuration. If that
@@ -197,7 +206,8 @@ directory is on PATH, `primeagen` works from any directory and preserves the
 caller's working directory. An explicit alternative is
 `sh install-command.sh /your/bin`. The link requires this checkout to stay in
 place; this is not a standalone distributable install. Build explicitly first.
-Input editing is currently printable ASCII; other transcript bytes are escaped.
+Input editing is currently printable ASCII; safe UTF-8 transcript scalars display
+normally, while invalid/control bytes are escaped.
 Automated headless ncurses cell assertions are not appearance or real-terminal
 mouse acceptance. Normal exit and SIGINT/SIGTERM restore the terminal; crashes
 and SIGKILL cannot promise restoration. Windows/Linux builds remain unproved.
