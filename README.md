@@ -42,6 +42,17 @@ admission, candidate restore and commit or rejection, then submissions resume.
 The displayed generation identifies the running code. This is a trusted local
 developer release, not a network updater or full agent-runtime migration.
 
+The terminal now has **three columns**: a tightly stacked `⌘`/`▦` text-symbol
+rail with shared line borders, a clickable People/Servers list (then a selected
+server's channels), and the right-side chat with fixed input/status. The existing
+OpenCode entry returns to the real configured chat. Sola/WhateverName and
+Ecosystem/#channel1..3 are **offline previews**, not registered models or real
+server conversations; selecting them hides the live draft/history and cannot
+submit it. Returning to OpenCode preserves that chat's draft/history/scroll.
+Below 64 columns the rail/list collapse; text symbols fall back to ASCII in a
+non-UTF locale. `--list-width` changes the middle-column default. Automated
+headless cells prove geometry/selection, not appearance or actual mouse hardware.
+
 Model replies now use a small **C terminal Markdown adapter**: bold, emphasis
 (portable underline fallback), headings, yellow inline/fenced code, and colored
 speaker labels. Markers are removed before wrapping; repeated prose blank lines
@@ -150,6 +161,8 @@ Requires the host ncurses headers/library (no automatic installation):
 sh cli/build.sh
 ./primeagen tui
 ./primeagen tui --owo
+sh install-command.sh
+primeagen
 ```
 
 Running `./primeagen` with no arguments also opens the terminal. Enter `/connect`
@@ -160,13 +173,30 @@ configured, connect **OpenCode Go** using OpenCode's own `/connect` first.
 Primeagen does not accept/store an API key here. The handoff starts a fresh
 terminal view; disconnected drafts are not transferred. `/help`, `/clear`
 (display only), `/update`, and `/quit` are local commands; unsupported slash commands are
-reported locally, never sent to the model. `/settings`, server/channel navigation,
+reported locally, never sent to the model. `/settings`, real server/channel session routing,
 streaming, Zen key entry and agent tool approval are not implemented.
 
 Wheel/PgUp/PgDn scroll the transcript; End returns to the tail. Click the input
 line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter
 sends only after connection; disconnected input makes no model/tool call.
 Mouse reporting depends on the terminal.
+Click `⌘` for People, `▦` for Servers, then click a list entry. Ctrl-P/Ctrl-S
+switch the middle panel; Ctrl-O returns to OpenCode. Only the right transcript
+scrolls. Preview entries cannot edit or send the resident chat draft.
+For highlighting/copying text, press **Ctrl-T**: mouse reporting turns off and
+the actual chat opens full-width, so terminal-native drag selection does not
+include the navigation columns. Drag to highlight, then use your terminal's Copy
+command (for example Cmd-C on macOS). Ctrl-T returns to the three-column browser.
+`primeagen tui --select-text` starts in that mode. Selection/clipboard behavior
+belongs to your terminal; this is not an application-owned selection buffer or
+automatic clipboard write. New output or scrolling may invalidate a selection.
+
+`sh install-command.sh` links this checkout's shell launcher into `~/.local/bin`
+without overwriting an existing command or editing shell configuration. If that
+directory is on PATH, `primeagen` works from any directory and preserves the
+caller's working directory. An explicit alternative is
+`sh install-command.sh /your/bin`. The link requires this checkout to stay in
+place; this is not a standalone distributable install. Build explicitly first.
 Input editing is currently printable ASCII; other transcript bytes are escaped.
 Automated headless ncurses cell assertions are not appearance or real-terminal
 mouse acceptance. Normal exit and SIGINT/SIGTERM restore the terminal; crashes
@@ -196,6 +226,9 @@ but does not contact a model.
   references/control flow, arbitrary external commands and registry extensibility
   remain future work. Building is never implicit permission to execute.
 - All work is cold-path; no zero-allocation/realtime or battle-tested claim.
+- The three-column browser is an initial presentation layer, not multi-model
+  session routing, server membership, persistent channel histories or role/tool
+  enforcement. Example entries are visibly labelled previews and make no calls.
 - Updates reload only `cli/view.c` rendering/command exports. Host, Tui layouts,
   provider adapters, roles and tools require separate implementation/restart.
   SHA256 references come from the trusted local builder, not model output.
