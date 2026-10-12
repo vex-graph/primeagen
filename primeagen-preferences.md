@@ -49,13 +49,20 @@ Ctrl-T/--select-text hands drag selection back to the terminal by disabling mous
 reporting and temporarily painting the actual chat full-width, without navigation
 text mixed into multiline selections. Terminal owns highlighting/copy; no clipboard
 mutation, application selection buffer or physical terminal proof is implied.
+Host replies are strict UTF-8 JSON, not ASCII-escaped surrogate halves. Python
+decodes provider JSON UTF-16 pairs before encoding native wire bytes; isolated
+surrogates fail. Transcript admission preserves safe UTF-8 and escapes malformed
+bytes/terminal controls/bidi overrides; row projection never splits a scalar.
+Wide ncurses output measures wcwidth under stable host LC_CTYPE, not byte counts.
+Input remains ASCII; full grapheme/ZWJ shaping and terminal font-width agreement
+remain gaps. This does not amend the shared native JSON parser's BMP-only escapes.
 The explicit install-command.sh links the real shell launcher into a per-user
 bin directory, preserving unrelated commands, shell config and caller cwd.
 Terminal Markdown is a Primeagen presentation adapter, not a guessed Vexspoke API.
 Tui sanitizes controls before parsing and owns parallel visible-byte style flags;
 ncurses maps only host-defined flags, never model ANSI. Formatting precedes wrap,
 compact prose does not change remote messages, and fenced code whitespace remains
-literal. The flat subset and emphasis fallback do not imply CommonMark/Unicode
+literal. The flat subset and emphasis fallback do not imply CommonMark/full Unicode shaping
 or appearance acceptance. Styling owns no transport, credentials or permission.
 
 Explicit `session --engine opencode` consumes API Haven's existing EngineProvider
