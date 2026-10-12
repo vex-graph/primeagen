@@ -14,7 +14,9 @@ FUNCTION REGISTRY:
   turn(session, prompt, instructions, model) : create isolated deny-all session,
       verify permission echo, admit prompt, poll newest messages through idle;
       reject tools/errors/pagination exhaustion, interrupt on exceptional paths.
-  worker(model) : newline request/reply loop; final answers only, generic failures.
+   worker(model) : UTF-8 newline JSON reply loop; final answers, generic failures.
+       UTF-16 JSON escapes are decoded by Python, then emitted as scalar UTF-8;
+       no surrogate halves are passed through the native parser/display boundary.
   terminate(signum, frame) : raise cancellation so bounded child cleanup executes.
   launch(owo, model) : pass nonblocking wire fds to native TUI; terminal owns display;
       on every exit terminate/kill/reap worker, close pipes. No implicit build.
@@ -134,7 +136,7 @@ def turn(session, prompt, instructions, model):
                     completed = True
             if completed:
                 text = "\n".join(answers)
-                if not text or len(json.dumps({"ok": True, "text": text}, ensure_ascii=True).encode()) >= WIRE_CAP - 1:
+                if not text or len(json.dumps({"ok": True, "text": text}, ensure_ascii=False).encode("utf-8")) >= WIRE_CAP - 1:
                     raise ValueError("empty or oversized session answer")
                 return session, text
             time.sleep(0.1)
@@ -167,7 +169,9 @@ def worker(model):
             if not isinstance(request, dict) or set(request) != {"prompt", "instructions"}:
                 raise ValueError("invalid wire request")
             session, text = turn(session, request["prompt"], request["instructions"], model)
-            print(json.dumps({"ok": True, "text": text}, ensure_ascii=True, separators=(",", ":")), flush=True)
+            frame = json.dumps({"ok": True, "text": text}, ensure_ascii=False, separators=(",", ":"))
+            sys.stdout.buffer.write(frame.encode("utf-8") + b"\n")
+            sys.stdout.buffer.flush()
         except (ValueError, OSError, KeyError, TypeError, AttributeError):
             print('{"ok":false,"text":"OpenCode session failed"}', flush=True)
             return 1
