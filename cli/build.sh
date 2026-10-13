@@ -7,6 +7,7 @@ vex=${VEXSPOKE_SOURCE_DIR:-"$root/../../host-behavior/vexspoke/src"}
 api=${API_HAVEN_SOURCE_DIR:-"$root/../../drivers/api-haven/src"}
 hot=${HOTCWAP_SOURCE_DIR:-"$root/../../host-behavior/hotcwap"}
 det=${DETERMINANT_SOURCE_DIR:-"$root/../../drivers/determinant/src"}
+rel=${RELATIONAL_ENGINE_SOURCE_DIR:-"$root/../../host-behavior/relational-engine/src"}
 # PRIMEAGEN_ROOT lets the host find its own resources/>w<.png in any checkout.
 PRIMEAGEN_ROOT="$root"
 export PRIMEAGEN_ROOT
@@ -19,14 +20,14 @@ stage=$(mktemp "$root/.build/tui.XXXXXX")
 host_stage=$stage
 trap 'rm -f "$stage" "$host_stage" "$root/.build/cli_view.sha256.new" "$root/.build/cli_view.sha256.raw"' EXIT HUP INT TERM
 "${CC:-clang}" -std=gnu23 -Wall -Wextra -Werror -mcpu=apple-m1 \
-    -mmacosx-version-min=14.0 -I"$root" -I"$vex" -I"$api" -I"$hot" -I"$det" \
+    -mmacosx-version-min=14.0 -I"$root" -I"$vex" -I"$api" -I"$hot" -I"$det" -I"$rel" \
     "$root/cli/main.c" "$root/tui/tui.c" "$root/tui/markdown.c" "$root/tui/event/mouse_event.c" \
     "$root/cli/view.c" "$root/cli/appearance.c" "$root/cli/screen.c" "$root/cli/update.c" "$root/src/settings.c" \
-    $det_src \
+    $det_src "$vex/image/png.c" "$rel/nio/mem.c" "$rel/type/type.c" "$vex/atomic/spin.c" \
     "$hot/hot/hot.c" "$hot/hot/hot_trampoline.c" "$hot/hot/hot_retire.c" "$hot/hot/manifest.c" "$hot/hot/ledger.c" "$vex/security/crypto.c" \
     "$root/personality/owo.c" "$vex/net/json.c" \
     "$root/session/session_bridge.c" "$api/harness/harness.c" "$api/harness/engine_provider.c" \
-    -ffunction-sections -Wl,-dead_strip -lncurses -o "$stage"
+    -ffunction-sections -Wl,-dead_strip -lncurses -lz -o "$stage"
 mkdir -p "$root/.build/payload"
 stage=$(mktemp "$root/.build/cli_view.XXXXXX")
 "${CC:-clang}" -std=gnu23 -Wall -Wextra -Werror -mcpu=apple-m1 \

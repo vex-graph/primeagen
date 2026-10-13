@@ -5,6 +5,7 @@
 #include "cli/view.h"
 #include "cli/update.h"
 #include "cli/appearance.h"
+#include "image/png.h"
 #include "hot/manifest.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -300,6 +301,7 @@ int main(int argc, char **argv) {
     PrimeagenPanelsFn panelsView = Primeagen_drawPanels;
     PrimeagenCommandFn localCommand = command;
     PrimeagenAppearanceFn appearanceView = Primeagen_setAppearance;
+    PrimeagenBadgeFn badgeView = Primeagen_setBadge;
     if (updatePayload != nullptr || updateChecksum != nullptr) {
         uint32_t loaded;
         if (updatePayload == nullptr || updateChecksum == nullptr ||
@@ -316,6 +318,11 @@ int main(int argc, char **argv) {
         localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
         panelsView = (PrimeagenPanelsFn) Hot_get_symbol(hot, "Primeagen_drawPanels");
         appearanceView = (PrimeagenAppearanceFn) Hot_get_symbol(hot, "Primeagen_setAppearance");
+        {
+            PrimeagenBadgeFn refreshedBadge = (PrimeagenBadgeFn) Hot_get_symbol(hot, "Primeagen_setBadge");
+            if (refreshedBadge != nullptr)
+                badgeView = refreshedBadge;
+        }
         if (view == nullptr || localCommand == nullptr || panelsView == nullptr) {
             HotShutdown(hot);
             Tui_free(&state);
@@ -349,6 +356,35 @@ int main(int argc, char **argv) {
     SettingsConsent consent = (SettingsConsent) Settings_getConsent(&settings);
     (void) consent;
     (void) appearanceView(Settings_getAppearance(&settings));
+
+    // The app's badge: decode the PNG once with a libc-backed buffer (this lean
+    // host owns no engine arena), then hand the pixels to the view. The view
+    // rasterises them into terminal cells on every render, so a resize simply
+    // re-samples — the picture is never a cached bitmap.
+    uint8_t *badgePixels = nullptr;
+    uint32_t badgeWidth = 0, badgeHeight = 0;
+    {
+        char badgePath[1200];
+        const char *badgeRoot = getenv("PRIMEAGEN_ROOT");
+        if (badgeRoot != nullptr) {
+            (void) snprintf(badgePath, sizeof badgePath, "%s/resources/>w<.png", badgeRoot);
+        } else {
+            char dir[1000];
+            (void) snprintf(dir, sizeof dir, "%s", argv[0]);
+            char *slash = strrchr(dir, '/');
+            if (slash != nullptr)
+                *slash = '\0';
+            (void) snprintf(badgePath, sizeof badgePath, "%s/../resources/>w<.png", dir);
+        }
+        FILE *badgeFile = fopen(badgePath, "rb");
+        if (badgeFile != nullptr) {
+            static uint8_t pngBytes[1u << 20];
+            size_t pngLength = fread(pngBytes, 1, sizeof pngBytes, badgeFile);
+            (void) fclose(badgeFile);
+            if (Png_decodeMalloc(pngBytes, pngLength, &badgePixels, &badgeWidth, &badgeHeight) == PNG_OK)
+                (void) badgeView(badgePixels, badgeWidth, badgeHeight);
+        }
+    }
 
     setlocale(LC_CTYPE, ""); // text symbols, not emoji; ASCII fallback if unavailable
     SCREEN *screen = newterm(nullptr, stdout, stdin);
