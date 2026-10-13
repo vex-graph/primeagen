@@ -290,6 +290,16 @@ does exist: the default connected session uses the local execution gate above,
 not the unreliable legacy remote permission queue.
 
 Wheel-up/down and Up/Down scroll the transcript; End returns to the tail.
+
+The frame's horizontal rules are drawn by the **R3 Determinant toolkit** rather
+than a bare ncurses line: the look is a named `TerminalAppearance` preset
+(`ascii-solid`, `ascii-striped`, `ascii-dashed`, `unicode-light`,
+`unicode-emdash`, `unicode-double`) persisted as `appearance=` in the settings
+record and applied through the same reload seam as the draw/command pointers, so
+a hot-swapped view adopts the same look without re-acquiring the terminal. Only
+the rules are migrated so far — the rest of the view still paints ncurses
+directly. The badge/wallpaper image path (PNG → cells) is implemented in the
+toolkit and the decoder (Vexspoke `image/png`) but is not yet wired here.
 Click the input
 line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter
 sends only after connection; disconnected input makes no model/tool call.
