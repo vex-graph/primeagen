@@ -145,6 +145,52 @@ static TerminalPen lookText(const TerminalAppearance *look) {
 static TerminalPen lookRule(const TerminalAppearance *look) {
     return TerminalPen_2(TERMINAL_STYLE_DIM, (*look).colorMuted);
 }
+static TerminalPen lookError(const TerminalAppearance *look) {
+    return TerminalPen_2(TERMINAL_STYLE_ERROR | TERMINAL_STYLE_BOLD, (*look).colorError);
+}
+
+// Too small to resolve: one centred notice, re-centred every render (so it stays
+// anchored in the middle while the window is dragged). Word-wrapped, never split
+// mid-word.
+static void renderTooSmall(TerminalCanvas *root, const TerminalAppearance *look) {
+    TerminalCanvas_fill(root, ' ', TerminalPen_1(TERMINAL_STYLE_NONE));
+    size_t width = TerminalCanvas_getWidth(root);
+    size_t height = TerminalCanvas_getHeight(root);
+    if (width == 0 || height == 0)
+        return;
+    const char *text = PRIMEAGEN_SCREEN_TOO_SMALL;
+    size_t length = strlen(text);
+    enum { MAX_LINES = 8 };
+    size_t lineStart[MAX_LINES];
+    size_t lineLength[MAX_LINES];
+    size_t lines = 0;
+    size_t at = 0;
+    while (at < length && lines < MAX_LINES) {
+        size_t start = at;
+        size_t lastSpace = 0;
+        size_t used = 0;
+        while (at < length && used < width) {
+            if (text[at] == ' ')
+                lastSpace = at;
+            ++at;
+            ++used;
+        }
+        size_t end = at;
+        if (end < length && lastSpace > start) {   // break at a word boundary
+            end = lastSpace;
+            at = lastSpace + 1;
+        }
+        lineStart[lines] = start;
+        lineLength[lines] = end - start;
+        ++lines;
+    }
+    size_t first = lines < height ? (height - lines) / 2 : 0;
+    for (size_t i = 0; i < lines && first + i < height; ++i) {
+        size_t span = lineLength[i];
+        size_t lx = span < width ? (width - span) / 2 : 0;
+        TerminalCanvas_text(root, lx, first + i, text + lineStart[i], span, lookError(look));
+    }
+}
 
 void PrimeagenScreen_renderHome(PrimeagenScreen *self, const char *title,
                                 const char *const *menu, size_t menuCount, size_t menuSelection,
@@ -153,9 +199,12 @@ void PrimeagenScreen_renderHome(PrimeagenScreen *self, const char *title,
         return;
     TerminalCanvas root = PrimeagenScreen_canvas(self);
     TerminalCanvas_fill(&root, ' ', TerminalPen_1(TERMINAL_STYLE_NONE));
-    if (TerminalCanvas_getWidth(&root) < 40 || TerminalCanvas_getHeight(&root) < 10)
-        return;
     const TerminalAppearance *look = PrimeagenAppearance_current();
+    if (TerminalCanvas_getWidth(&root) < PRIMEAGEN_SCREEN_MIN_COLUMNS
+        || TerminalCanvas_getHeight(&root) < PRIMEAGEN_SCREEN_MIN_ROWS) {
+        renderTooSmall(&root, look);
+        return;
+    }
 
     size_t columns = (*self).columns;
     size_t left = PRIMEAGEN_SCREEN_LEFT_DEFAULT < columns / 3 ? PRIMEAGEN_SCREEN_LEFT_DEFAULT : columns / 3;
@@ -176,9 +225,10 @@ void PrimeagenScreen_renderHome(PrimeagenScreen *self, const char *title,
     // Column separator between the rail and the panel.
     TerminalCanvas_vline(&root, left, '|', lookRule(look));
 
-    // The badge image fills the panel BESIDE the rail (its own size scaled in).
+    // The badge is ZOOM-FIT, never stretched: one uniform scale keeps its aspect
+    // and orientation, centred in the panel beside the rail.
     if (badge != nullptr && TerminalImage_isValid(badge))
-        TerminalImage_renderFit(badge, &panel);
+        TerminalImage_renderContain(badge, &panel);
 }
 
 bool PrimeagenScreen_renderChat(PrimeagenScreen *self, const PrimeagenScreenState *state) {
@@ -188,9 +238,11 @@ bool PrimeagenScreen_renderChat(PrimeagenScreen *self, const PrimeagenScreenStat
     TerminalCanvas_fill(&root, ' ', TerminalPen_1(TERMINAL_STYLE_NONE));
     size_t columns = (*self).columns;
     size_t rows = (*self).rows;
-    if (columns < TUI_MIN_COLUMNS || rows < TUI_MIN_ROWS)
-        return false;
     const TerminalAppearance *look = PrimeagenAppearance_current();
+    if (columns < PRIMEAGEN_SCREEN_MIN_COLUMNS || rows < PRIMEAGEN_SCREEN_MIN_ROWS) {
+        renderTooSmall(&root, look);
+        return true;
+    }
 
     size_t left = PRIMEAGEN_SCREEN_LEFT_DEFAULT < columns / 3 ? PRIMEAGEN_SCREEN_LEFT_DEFAULT : columns / 3;
     size_t right = PRIMEAGEN_SCREEN_RIGHT_DEFAULT < columns / 4 ? PRIMEAGEN_SCREEN_RIGHT_DEFAULT : columns / 4;

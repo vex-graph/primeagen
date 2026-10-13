@@ -30,6 +30,11 @@
 
 #define PRIMEAGEN_SCREEN_LEFT_DEFAULT 22
 #define PRIMEAGEN_SCREEN_RIGHT_DEFAULT 24
+// Below this the frame cannot resolve its columns/rows honestly, so it shows a
+// centred notice instead of a half-drawn screen.
+#define PRIMEAGEN_SCREEN_MIN_COLUMNS 40
+#define PRIMEAGEN_SCREEN_MIN_ROWS 20
+#define PRIMEAGEN_SCREEN_TOO_SMALL "Rendering error! Must be at least 40 x 20 to resolve the whole thing"
 
 typedef struct PrimeagenScreen {
     uint32_t *cells;    // codepoint plane
