@@ -6,15 +6,20 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 vex=${VEXSPOKE_SOURCE_DIR:-"$root/../../host-behavior/vexspoke/src"}
 api=${API_HAVEN_SOURCE_DIR:-"$root/../../drivers/api-haven/src"}
 hot=${HOTCWAP_SOURCE_DIR:-"$root/../../host-behavior/hotcwap"}
+det=${DETERMINANT_SOURCE_DIR:-"$root/../../drivers/determinant/src"}
+# The R3 terminal toolkit (canvas/view/appearance). Determinant stays bare; the
+# app supplies every string, colour and glyph choice.
+det_src="$det/terminal/terminal_canvas.c $det/terminal/terminal_frame.c $det/terminal/terminal_image.c $det/terminal/terminal_appearance.c"
 sh "$root/tools/build.sh"
 mkdir -p "$root/.build"
 stage=$(mktemp "$root/.build/tui.XXXXXX")
 host_stage=$stage
 trap 'rm -f "$stage" "$host_stage" "$root/.build/cli_view.sha256.new" "$root/.build/cli_view.sha256.raw"' EXIT HUP INT TERM
 "${CC:-clang}" -std=gnu23 -Wall -Wextra -Werror -mcpu=apple-m1 \
-    -mmacosx-version-min=14.0 -I"$root" -I"$vex" -I"$api" -I"$hot" \
+    -mmacosx-version-min=14.0 -I"$root" -I"$vex" -I"$api" -I"$hot" -I"$det" \
     "$root/cli/main.c" "$root/tui/tui.c" "$root/tui/markdown.c" "$root/tui/event/mouse_event.c" \
-    "$root/cli/view.c" "$root/cli/update.c" \
+    "$root/cli/view.c" "$root/cli/appearance.c" "$root/cli/update.c" "$root/src/settings.c" \
+    $det_src \
     "$hot/hot/hot.c" "$hot/hot/hot_trampoline.c" "$hot/hot/hot_retire.c" "$hot/hot/manifest.c" "$hot/hot/ledger.c" "$vex/security/crypto.c" \
     "$root/personality/owo.c" "$vex/net/json.c" \
     "$root/session/session_bridge.c" "$api/harness/harness.c" "$api/harness/engine_provider.c" \
@@ -22,8 +27,9 @@ trap 'rm -f "$stage" "$host_stage" "$root/.build/cli_view.sha256.new" "$root/.bu
 mkdir -p "$root/.build/payload"
 stage=$(mktemp "$root/.build/cli_view.XXXXXX")
 "${CC:-clang}" -std=gnu23 -Wall -Wextra -Werror -mcpu=apple-m1 \
-    -mmacosx-version-min=14.0 -I"$root" -I"$vex" -I"$hot" -dynamiclib \
-    "$root/cli/view.c" "$root/tui/tui.c" "$root/tui/markdown.c" "$vex/net/json.c" \
+    -mmacosx-version-min=14.0 -I"$root" -I"$vex" -I"$hot" -I"$det" -dynamiclib \
+    "$root/cli/view.c" "$root/cli/appearance.c" "$root/tui/tui.c" "$root/tui/markdown.c" "$vex/net/json.c" \
+    $det_src \
     -lncurses -o "$stage"
 shasum -a 256 "$stage" > "$root/.build/cli_view.sha256.raw"
 cut -d ' ' -f 1 "$root/.build/cli_view.sha256.raw" > "$root/.build/cli_view.sha256.new"
