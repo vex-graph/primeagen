@@ -48,12 +48,17 @@ int main(void) {
     (void) noecho();
     (void) keypad(stdscr, true);
     (void) curs_set(0);
+    if (has_colors()) {
+        (void) start_color();
+        (void) use_default_colors();
+    }
 
     static const char *menu[] = { "People", "Servers", "Settings" };
     PrimeagenScreen screen;
     PrimeagenScreen_init(&screen);
     int home = 1;
     int running = 1;
+    int focusPanel = 0;
     while (running) {
         int rows = 0, columns = 0;
         getmaxyx(stdscr, rows, columns);
@@ -65,6 +70,7 @@ int main(void) {
             PrimeagenScreenState state = {0};
             state.tui = &tui;
             state.focused = true;
+            state.focusPanel = focusPanel;
             (void) PrimeagenScreen_renderChat(&screen, &state);
         }
         if (!PrimeagenScreen_present(&screen, stdscr))
@@ -76,6 +82,8 @@ int main(void) {
             home = 1;
         else if (key == '2')
             home = 0;
+        else if (key == 'f')                       // cycle which panel owns focus
+            focusPanel = (focusPanel + 1) % 3;
     }
     endwin();
     PrimeagenScreen_free(&screen);

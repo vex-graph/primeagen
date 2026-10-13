@@ -63,6 +63,7 @@ typedef struct PrimeagenScreenState {
     int panel;        // PRIMEAGEN_PANEL_*
     int selection;
     int listWidth;
+    int focusPanel;   // which panel owns the keyboard: 0 rail, 1 centre, 2 people
 } PrimeagenScreenState;
 
 // HOME: `title` in the rail, `menu` rows below it, `badge` (nullable) filling
