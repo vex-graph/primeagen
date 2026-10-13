@@ -18,8 +18,8 @@
 ;;DEFINITION
 /** Primeagen's frame as a RENDERER: the whole screen is composed into an owned
  * cell grid with the Determinant toolkit and handed to ncurses in one blit.
- * Two layouts mirror `_notes/_self/tui.txt` — HOME (the app's banner across the
- * top, then the title and the People/Servers/Settings menu) and CHAT (left rail, centre chat, right
+ * Two layouts mirror `_notes/_self/tui.txt` — HOME (title rail with the menu, the
+ * app's picture in the panel beside it) and CHAT (left rail, centre chat, right
  * people). The frame draws its OWN border and corners, so it reads as a TUI
  * inside the window rather than borrowing the window's edges.
  *
@@ -41,7 +41,7 @@
  *   selectionPen(appearance, focused)  HIGHLIGHT when focused, COLOUR when not
  *   reshuffleBannerNoise()             fresh decor scatter, one per render
  *   renderTooSmall(root, look)         centred, word-wrapped resolution notice
- *   drawBorder(root, look)             the frame's own box + corners
+ *   drawBorder(root, look)             the frame's own box (real corners)
  *   pairFor(rgb)                       packed colour -> ncurses pair (cached)
  *   navItems(panel, &count)            the rail's rows per panel
  * FUNCTION REGISTRY (exports):
@@ -108,10 +108,6 @@ static uint32_t s_noiseSeed = 1;
 #define PRIMEAGEN_SCREEN_NOISE_ALPHABET \
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789%@#$&*+=/<>"
 #define PRIMEAGEN_SCREEN_NOISE_COLOR TERMINAL_RGB(0x70, 0x70, 0x86)
-// The banner's glyph ladder. The low end is a WIDE PLATEAU: a dark paper (the
-// common case for a dark-mode banner) measures just above black, and a one-step
-// ladder would render it as a field of dots instead of leaving it to the decor.
-#define PRIMEAGEN_SCREEN_BANNER_RAMP "  .:-=+*#%@"
 // How much of the band the decor covers. The field fills the band edge to
 // edge; this only decides how solid it looks.
 #define PRIMEAGEN_SCREEN_NOISE_DENSITY 80
@@ -154,7 +150,6 @@ void PrimeagenScreen_setBanner(const uint8_t *rgba, uint32_t width, uint32_t hei
     }
     s_banner = TerminalImage((uint8_t*) (uintptr_t) rgba, (size_t) width, (size_t) height);
     TerminalImage_setInvert(&s_banner, paperIsBright(rgba, width, height));
-    (void) TerminalImage_setRamp(&s_banner, PRIMEAGEN_SCREEN_BANNER_RAMP);
     size_t rampCount = 0;
     const uint32_t *ramp = TerminalImage_rampPurple(&rampCount);
     (void) TerminalImage_setColorRamp(&s_banner, ramp, rampCount);
@@ -283,23 +278,8 @@ static void renderTooSmall(TerminalCanvas *root, const TerminalAppearance *look)
 
 // The frame's OWN box, with real corners, so the picture reads as a terminal
 // instrument set inside the window rather than content pressed against it.
-// The frame's OWN box, with real corners, so the picture reads as a terminal
-// instrument set inside the window rather than content pressed against it.
 static void drawBorder(TerminalCanvas *root, const TerminalAppearance *look) {
     TerminalRule_drawBox(&(*look).rule, root, lookRule(look));
-}
-
-// ONE detached, labelled panel: its own corners, its label centred inside. This
-// is the app's visual unit — panels never share an edge or meet at a junction.
-static void drawLabelledBox(TerminalCanvas *parent, const TerminalAppearance *look,
-                            size_t lx, size_t ly, size_t w, size_t h,
-                            const char *label, TerminalPen pen) {
-    TerminalCanvas box = TerminalCanvas_sub(parent, lx, ly, w, h);
-    if (!TerminalCanvas_isValid(&box))
-        return;
-    TerminalRule_drawBox(&(*look).rule, &box, lookRule(look));
-    if (label != nullptr && h >= 3)
-        putCentered(&box, h / 2, label, pen);
 }
 
 void PrimeagenScreen_renderHome(PrimeagenScreen *self, const char *title,
@@ -322,32 +302,29 @@ void PrimeagenScreen_renderHome(PrimeagenScreen *self, const char *title,
     if (!TerminalCanvas_isValid(&inner))
         return;
 
+    // The tui.txt basics: a title rail with the menu stacked down it, the app's
+    // picture filling the panel beside it.
     size_t columns = TerminalCanvas_getWidth(&inner);
     size_t rows = TerminalCanvas_getHeight(&inner);
     size_t left = PRIMEAGEN_SCREEN_LEFT_DEFAULT < columns / 3 ? PRIMEAGEN_SCREEN_LEFT_DEFAULT : columns / 3;
-    size_t rightX = left + PRIMEAGEN_SCREEN_GAP;
+    TerminalCanvas rail = TerminalCanvas_sub(&inner, 0, 0, left, rows);
+    TerminalCanvas panel = TerminalCanvas_sub(&inner, left + 1, 0, columns - left - 1, rows);
+    putCentered(&rail, 0, title, lookAccent(look));
+    TerminalRule_drawCut(&(*look).rule, &rail, 1, 1, lookRule(look));
+    size_t row = 3;
+    for (size_t i = 0; i < menuCount && row + 2 < TerminalCanvas_getHeight(&rail); ++i, row += 2) {
+        TerminalPen pen = (i == menuSelection) ? selectionPen(look, true) : lookText(look);
+        putCentered(&rail, row, menu[i], pen);
+        TerminalRule_drawCut(&(*look).rule, &rail, row + 1, 1, lookRule(look));
+    }
+    TerminalCanvas_vline(&inner, left, '|', lookRule(look));
 
-    // The BANNER is the first thing: its own detached box across the rest of the
-    // frame, decor filled edge to edge with the app's picture zoom-fit inside it.
-    TerminalCanvas bannerBox = TerminalCanvas_sub(&inner, rightX, 0, columns - rightX, rows);
-    TerminalRule_drawBox(&(*look).rule, &bannerBox, lookRule(look));
+    // Zoom-fit into the panel: one uniform scale (cell-aspect corrected), centred,
+    // so the picture is never squashed. The decor is re-scattered first, so every
+    // revalidate draws a fresh random field behind it.
     if (banner != nullptr && TerminalImage_isValid(banner)) {
         reshuffleBannerNoise();
-        TerminalCanvas interior = TerminalCanvas_sub(&bannerBox, 1, 1,
-                                                     TerminalCanvas_getWidth(&bannerBox) - 2,
-                                                     TerminalCanvas_getHeight(&bannerBox) - 2);
-        TerminalImage_renderContain(banner, &interior);
-    }
-
-    // Then the title, then the menu — one detached box each, stacked with a blank
-    // row between them so nothing is welded into a single table.
-    size_t row = 0;
-    drawLabelledBox(&inner, look, 0, row, left, PRIMEAGEN_SCREEN_BOX_ROWS, title, lookAccent(look));
-    row += PRIMEAGEN_SCREEN_BOX_ROWS + 1;
-    for (size_t i = 0; i < menuCount && row + PRIMEAGEN_SCREEN_BOX_ROWS <= rows; ++i) {
-        TerminalPen pen = (i == menuSelection) ? selectionPen(look, true) : lookText(look);
-        drawLabelledBox(&inner, look, 0, row, left, PRIMEAGEN_SCREEN_BOX_ROWS, menu[i], pen);
-        row += PRIMEAGEN_SCREEN_BOX_ROWS + 1;
+        TerminalImage_renderContain(banner, &panel);
     }
 }
 
@@ -382,104 +359,74 @@ bool PrimeagenScreen_renderChat(PrimeagenScreen *self, const PrimeagenScreenStat
     size_t rows = TerminalCanvas_getHeight(&inner);
     size_t left = PRIMEAGEN_SCREEN_LEFT_DEFAULT < columns / 3 ? PRIMEAGEN_SCREEN_LEFT_DEFAULT : columns / 3;
     size_t right = PRIMEAGEN_SCREEN_RIGHT_DEFAULT < columns / 4 ? PRIMEAGEN_SCREEN_RIGHT_DEFAULT : columns / 4;
-    size_t gap = PRIMEAGEN_SCREEN_GAP;
-    if (left + right + gap * 2 + 6 >= columns)
+    if (left + right + 4 >= columns)
         right = 0;
-    size_t centreX = left + gap;
-    size_t centreW = right > 0 ? columns - left - right - gap * 2 : columns - left - gap;
-    const TerminalRule *rule = &(*look).rule;
-    TerminalPen muted = lookRule(look);
 
-    // Three DETACHED panels: each has its own corners, and every internal divider
-    // is CUT (it stops short of the panel's verticals) instead of welding the
-    // columns into one continuous grid.
-    TerminalCanvas leftBox = TerminalCanvas_sub(&inner, 0, 0, left, rows);
-    TerminalCanvas centreBox = TerminalCanvas_sub(&inner, centreX, 0, centreW, rows);
-    TerminalRule_drawBox(rule, &leftBox, muted);
-    TerminalRule_drawBox(rule, &centreBox, muted);
+    // Left rail: the focused list. Selection highlights only when it owns focus.
+    TerminalCanvas rail = TerminalCanvas_sub(&inner, 0, 0, left, rows);
+    putCentered(&rail, 0, "Primeagen", lookAccent(look));
+    TerminalRule_drawCut(&(*look).rule, &rail, 1, 1, lookRule(look));
+    putText(&rail, 0, 2, "[<-] Back", lookMuted(look));
+    const char *const *items = nullptr;
+    size_t itemCount = 0;
+    navItems((*state).panel, &items, &itemCount);
+    for (size_t i = 0; i < itemCount && i + 4 < TerminalCanvas_getHeight(&rail); ++i) {
+        bool selected = (int) i == (*state).selection;
+        TerminalPen pen = selected ? selectionPen(look, (*state).focusPanel == 0) : lookText(look);
+        if (selected)
+            putText(&rail, 0, i + 4, (*state).focusPanel == 0 ? "> " : "* ", pen);
+        putText(&rail, 2, i + 4, items[i], pen);
+    }
+    if (TerminalCanvas_getHeight(&rail) > 0)
+        putText(&rail, 0, TerminalCanvas_getHeight(&rail) - 1, "[+] Add", lookMuted(look));
+    TerminalCanvas_vline(&inner, left, '|', lookRule(look));
 
-    // Left panel: the rail — what it is, how to leave, the entries, how to add.
-    TerminalCanvas rail = TerminalCanvas_sub(&leftBox, 1, 1,
-                                             TerminalCanvas_getWidth(&leftBox) - 2,
-                                             TerminalCanvas_getHeight(&leftBox) - 2);
-    if (TerminalCanvas_isValid(&rail)) {
-        size_t railRows = TerminalCanvas_getHeight(&rail);
-        putCentered(&rail, 0, "Primeagen", lookAccent(look));
-        TerminalRule_drawCut(rule, &rail, 1, 1, muted);
-        putText(&rail, 0, 2, "[<-] Back", lookMuted(look));
-        const char *const *items = nullptr;
-        size_t itemCount = 0;
-        navItems((*state).panel, &items, &itemCount);
-        for (size_t i = 0; i < itemCount && i + 4 + 1 < railRows; ++i) {
-            bool selected = (int) i == (*state).selection;
-            TerminalPen pen = selected ? selectionPen(look, (*state).focusPanel == 0) : lookText(look);
-            if (selected)
-                putText(&rail, 0, i + 4, (*state).focusPanel == 0 ? "> " : "* ", pen);
-            putText(&rail, 2, i + 4, items[i], pen);
-        }
-        if (railRows > 0) {
-            TerminalRule_drawCut(rule, &rail, railRows - 2, 1, muted);
-            putCentered(&rail, railRows - 1, "[+] Add", lookMuted(look));
+    // Centre: channel title, transcript, palette, input, status.
+    size_t centreWidth = right > 0 ? columns - left - right - 2 : columns - left - 1;
+    TerminalCanvas centre = TerminalCanvas_sub(&inner, left + 1, 0, centreWidth, rows);
+    putText(&centre, 1, 0, "Ecosystem > #general", lookText(look));
+    TerminalRule_drawCut(&(*look).rule, &centre, 1, 1, lookRule(look));
+
+    size_t statusRow = rows > 0 ? rows - 1 : 0;
+    size_t inputRow = rows > 1 ? rows - 2 : 0;
+    size_t sepInput = inputRow > 0 ? inputRow - 1 : 0;
+    size_t chatHeight = sepInput > 2 ? sepInput - 2 : 0;
+    TerminalCanvas chat = TerminalCanvas_sub(&centre, 0, 2, centreWidth, chatHeight);
+    if (TerminalCanvas_isValid(&chat)) {
+        size_t first = Tui_getFirstVisibleRow((*state).tui);
+        size_t total = Tui_getVisualRowCount((*state).tui);
+        size_t height = TerminalCanvas_getHeight(&chat);
+        char line[512];
+        uint8_t styles[512];
+        for (size_t i = 0; i < height && first + i < total; ++i) {
+            if (!Tui_copyStyledRow((*state).tui, first + i, line, styles, sizeof line, nullptr))
+                break;
+            TerminalPen pen = lookText(look);
+            if (styles[0] & TEXT_STYLE_USER) pen.style |= TERMINAL_STYLE_BOLD;
+            if (styles[0] & TEXT_STYLE_ASSISTANT) pen.style |= TERMINAL_STYLE_ACCENT;
+            if (styles[0] & TEXT_STYLE_ERROR) pen.style |= TERMINAL_STYLE_ERROR;
+            putText(&chat, 0, i, line, pen);
         }
     }
+    TerminalRule_drawCut(&(*look).rule, &centre, sepInput, 1, lookRule(look));
+    putText(&centre, 0, inputRow, "> ", lookAccent(look));
+    putText(&centre, 2, inputRow, Tui_getInput((*state).tui), lookText(look));
+    const char *status = (*state).failed ? "session closed | Ctrl-Q and relaunch"
+                       : (*state).busy ? "working | Ctrl-Q cancels locally"
+                       : (*state).sessionMode ? "OpenCode chat | inspect auto | edit/shell ask"
+                       : "disconnected | /connect uses your login";
+    putText(&centre, 0, statusRow, status, lookMuted(look));
 
-    // Centre panel: channel, transcript, a cut divider, the input, the status.
-    TerminalCanvas centre = TerminalCanvas_sub(&centreBox, 1, 1,
-                                               TerminalCanvas_getWidth(&centreBox) - 2,
-                                               TerminalCanvas_getHeight(&centreBox) - 2);
-    if (TerminalCanvas_isValid(&centre)) {
-        size_t centreRows = TerminalCanvas_getHeight(&centre);
-        putText(&centre, 1, 0, "Ecosystem > #general", lookText(look));
-        TerminalRule_drawCut(rule, &centre, 1, 1, muted);
-        size_t statusRow = centreRows > 0 ? centreRows - 1 : 0;
-        size_t inputRow = centreRows > 1 ? centreRows - 2 : 0;
-        size_t sepInput = inputRow > 0 ? inputRow - 1 : 0;
-        size_t chatHeight = sepInput > 2 ? sepInput - 2 : 0;
-        TerminalCanvas chat = TerminalCanvas_sub(&centre, 0, 2, TerminalCanvas_getWidth(&centre), chatHeight);
-        if (TerminalCanvas_isValid(&chat)) {
-            size_t first = Tui_getFirstVisibleRow((*state).tui);
-            size_t total = Tui_getVisualRowCount((*state).tui);
-            size_t height = TerminalCanvas_getHeight(&chat);
-            char line[512];
-            uint8_t styles[512];
-            for (size_t i = 0; i < height && first + i < total; ++i) {
-                if (!Tui_copyStyledRow((*state).tui, first + i, line, styles, sizeof line, nullptr))
-                    break;
-                TerminalPen pen = lookText(look);
-                if (styles[0] & TEXT_STYLE_USER) pen.style |= TERMINAL_STYLE_BOLD;
-                if (styles[0] & TEXT_STYLE_ASSISTANT) pen.style |= TERMINAL_STYLE_ACCENT;
-                if (styles[0] & TEXT_STYLE_ERROR) pen.style |= TERMINAL_STYLE_ERROR;
-                putText(&chat, 0, i, line, pen);
-            }
-        }
-        TerminalRule_drawCut(rule, &centre, sepInput, 1, muted);
-        putText(&centre, 0, inputRow, "> ", lookAccent(look));
-        putText(&centre, 2, inputRow, Tui_getInput((*state).tui), lookText(look));
-        const char *status = (*state).failed ? "session closed | Ctrl-Q and relaunch"
-                           : (*state).busy ? "working | Ctrl-Q cancels locally"
-                           : (*state).sessionMode ? "OpenCode chat | inspect auto | edit/shell ask"
-                           : "disconnected | /connect uses your login";
-        putText(&centre, 1, statusRow, status, lookMuted(look));
-    }
-
-    // Right panel: the people list — same detached box, same focus rule.
+    // Right rail: the people list — same focus rule as the left rail.
     if (right > 0) {
-        TerminalCanvas rightBox = TerminalCanvas_sub(&inner, columns - right, 0, right, rows);
-        TerminalRule_drawBox(rule, &rightBox, muted);
-        TerminalCanvas people = TerminalCanvas_sub(&rightBox, 1, 1,
-                                                   TerminalCanvas_getWidth(&rightBox) - 2,
-                                                   TerminalCanvas_getHeight(&rightBox) - 2);
-        if (TerminalCanvas_isValid(&people)) {
-            putCentered(&people, 0, "Users", lookText(look));
-            TerminalRule_drawCut(rule, &people, 1, 1, muted);
-            const char *const *items = nullptr;
-            size_t itemCount = 0;
-            navItems((*state).panel, &items, &itemCount);
-            for (size_t i = 0; i < itemCount && i + 2 < TerminalCanvas_getHeight(&people); ++i) {
-                bool selected = (int) i == (*state).selection;
-                TerminalPen pen = selected ? selectionPen(look, (*state).focusPanel == 2) : lookMuted(look);
-                putText(&people, 1, i + 2, items[i], pen);
-            }
+        TerminalCanvas people = TerminalCanvas_sub(&inner, columns - right, 0, right, rows);
+        TerminalCanvas_vline(&inner, columns - right - 1, '|', lookRule(look));
+        putCentered(&people, 0, "Users", lookText(look));
+        TerminalRule_drawCut(&(*look).rule, &people, 1, 1, lookRule(look));
+        for (size_t i = 0; i < itemCount && i + 2 < TerminalCanvas_getHeight(&people); ++i) {
+            bool selected = (int) i == (*state).selection;
+            TerminalPen pen = selected ? selectionPen(look, (*state).focusPanel == 2) : lookMuted(look);
+            putText(&people, 1, i + 2, items[i], pen);
         }
     }
     return true;

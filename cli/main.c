@@ -367,14 +367,14 @@ int main(int argc, char **argv) {
         char bannerPath[1200];
         const char *bannerRoot = getenv("PRIMEAGEN_ROOT");
         if (bannerRoot != nullptr) {
-            (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/banner.png", bannerRoot);
+            (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/>w<.png", bannerRoot);
         } else {
             char dir[1000];
             (void) snprintf(dir, sizeof dir, "%s", argv[0]);
             char *slash = strrchr(dir, '/');
             if (slash != nullptr)
                 *slash = '\0';
-            (void) snprintf(bannerPath, sizeof bannerPath, "%s/../resources/banner.png", dir);
+            (void) snprintf(bannerPath, sizeof bannerPath, "%s/../resources/>w<.png", dir);
         }
         FILE *bannerFile = fopen(bannerPath, "rb");
         if (bannerFile != nullptr) {

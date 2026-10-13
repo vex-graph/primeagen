@@ -1,7 +1,7 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 // cli/preview.c — run the NEW Primeagen frame (cli/screen.c) in a real terminal,
 // without touching the live view or the reload path. A development preview: it
-// owns the terminal, decodes resources/banner.png with a libc-backed buffer (this
+// owns the terminal, decodes resources/>w<.png with a libc-backed buffer (this
 // host has no engine arena), and re-renders on every resize so the "always
 // revalidate" behaviour is visible. Keys: 1 = HOME, 2 = CHAT, r = resize, q = quit.
 #include <locale.h>
@@ -20,9 +20,9 @@ int main(void) {
     char bannerPath[1200];
     const char *root = getenv("PRIMEAGEN_ROOT");
     if (root != nullptr)
-        (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/banner.png", root);
+        (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/>w<.png", root);
     else
-        (void) snprintf(bannerPath, sizeof bannerPath, "resources/banner.png");
+        (void) snprintf(bannerPath, sizeof bannerPath, "resources/>w<.png");
     FILE *bannerFile = fopen(bannerPath, "rb");
     if (bannerFile != nullptr) {
         static uint8_t pngBytes[1u << 20];
