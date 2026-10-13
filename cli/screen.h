@@ -21,7 +21,7 @@
 //
 // Two layouts, matching `_notes/_self/tui.txt`:
 //   HOME  — the landing screen: title + People/Servers/Settings menu in the left
-//           rail, and the app's badge image filling the panel beside it.
+//           rail, and the app's banner image across the top of the frame.
 //   CHAT  — three columns: left rail (back + channels + add), centre (title,
 //           transcript, palette, input, status) and right users rail.
 //
@@ -30,6 +30,9 @@
 
 #define PRIMEAGEN_SCREEN_LEFT_DEFAULT 22
 #define PRIMEAGEN_SCREEN_RIGHT_DEFAULT 24
+// Blank columns between detached panels, and the height of a stacked menu box.
+#define PRIMEAGEN_SCREEN_GAP 2
+#define PRIMEAGEN_SCREEN_BOX_ROWS 3
 // Below this the frame cannot resolve its columns/rows honestly, so it shows a
 // centred notice instead of a half-drawn screen.
 #define PRIMEAGEN_SCREEN_MIN_COLUMNS 90
@@ -92,21 +95,21 @@ typedef struct PrimeagenScreenState {
     int focusPanel;   // which panel owns the keyboard: 0 rail, 1 centre, 2 people
 } PrimeagenScreenState;
 
-// HOME: `title` in the rail, `menu` rows below it, `badge` (nullable) filling
-// the panel beside the rail. `menuSelection` highlights one row.
+// HOME: the BANNER first (the app's own picture across the top of the frame),
+// then `title`, then the `menu` rows — all centred. `menuSelection` highlights one.
 void PrimeagenScreen_renderHome(PrimeagenScreen *self, const char *title,
                                 const char *const *menu, size_t menuCount, size_t menuSelection,
-                                const TerminalImage *badge);
+                                const TerminalImage *banner);
 
 // CHAT: the three-column layout over the resident Tui state.
 bool PrimeagenScreen_renderChat(PrimeagenScreen *self, const PrimeagenScreenState *state);
 
-// The app's badge image (white paper + dark ink): the host decodes its own PNG
-// and hands the pixels here; the screen inverts the paper and lets the caller's
-// palette treat it. NULL/zero clears it.
-void PrimeagenScreen_setBadge(const uint8_t *rgba, uint32_t width, uint32_t height);
-const TerminalImage *PrimeagenScreen_badge(void);
-bool PrimeagenScreen_hasBadge(void);
+// The app's BANNER image (white paper + dark ink, e.g. resources/banner.png): the
+// host decodes its own PNG and hands the pixels here; the screen inverts the paper
+// and lets the caller's palette treat it. NULL/zero clears it.
+void PrimeagenScreen_setBanner(const uint8_t *rgba, uint32_t width, uint32_t height);
+const TerminalImage *PrimeagenScreen_banner(void);
+bool PrimeagenScreen_hasBanner(void);
 
 // Blit the grid to ncurses in ONE pass (wide cells + colour pairs).
 bool PrimeagenScreen_present(const PrimeagenScreen *self, WINDOW *win);

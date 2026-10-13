@@ -189,8 +189,8 @@ bool Primeagen_setAppearance(const char *presetName) {
     return true;
 }
 
-bool Primeagen_setBadge(const uint8_t *rgba, uint32_t width, uint32_t height) {
-    PrimeagenScreen_setBadge(rgba, width, height);
+bool Primeagen_setBanner(const uint8_t *rgba, uint32_t width, uint32_t height) {
+    PrimeagenScreen_setBanner(rgba, width, height);
     return true;
 }
 
@@ -309,7 +309,7 @@ const void *VkModuleGetTrampolines(uint32_t *count) {
         {"Primeagen_draw", (void*) Primeagen_draw}, {"Primeagen_command", (void*) Primeagen_command},
         {"Primeagen_drawPanels", (void*) Primeagen_drawPanels},
         {"Primeagen_setAppearance", (void*) Primeagen_setAppearance},
-        {"Primeagen_setBadge", (void*) Primeagen_setBadge}
+        {"Primeagen_setBanner", (void*) Primeagen_setBanner}
     };
     if (count == nullptr)
         return nullptr;

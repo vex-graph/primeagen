@@ -7,7 +7,7 @@
 typedef bool (*PrimeagenDrawFn)(Tui *, bool, bool, bool, bool, bool, char *, uint8_t *, size_t);
 typedef int (*PrimeagenCommandFn)(Tui *, bool);
 typedef bool (*PrimeagenAppearanceFn)(const char *);
-typedef bool (*PrimeagenBadgeFn)(const uint8_t *, uint32_t, uint32_t);
+typedef bool (*PrimeagenBannerFn)(const uint8_t *, uint32_t, uint32_t);
 typedef bool (*PrimeagenPanelsFn)(Tui *, bool, bool, bool, bool, bool, int, int, int, char *, uint8_t *, size_t);
 // Presentation defaults, overridden by the host's --list-width option. Below the
 // three-column safety floor the view collapses to a full-width chat.
@@ -31,8 +31,8 @@ int Primeagen_command(Tui *state, bool sessionMode);
 // The look travels with the reloadable view: the host resolves this next to the
 // draw/command pointers so a hot swap adopts the same appearance.
 bool Primeagen_setAppearance(const char *presetName);
-// The app's badge image: the host decodes its own PNG and pushes the pixels.
-bool Primeagen_setBadge(const uint8_t *rgba, uint32_t width, uint32_t height);
+// The app's banner image: the host decodes its own PNG and pushes the pixels.
+bool Primeagen_setBanner(const uint8_t *rgba, uint32_t width, uint32_t height);
 bool Primeagen_draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, bool failed,
                     char *row, uint8_t *styles, size_t cap);
 #endif

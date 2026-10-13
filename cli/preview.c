@@ -1,7 +1,7 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 // cli/preview.c — run the NEW Primeagen frame (cli/screen.c) in a real terminal,
 // without touching the live view or the reload path. A development preview: it
-// owns the terminal, decodes resources/>w<.png with a libc-backed buffer (this
+// owns the terminal, decodes resources/banner.png with a libc-backed buffer (this
 // host has no engine arena), and re-renders on every resize so the "always
 // revalidate" behaviour is visible. Keys: 1 = HOME, 2 = CHAT, r = resize, q = quit.
 #include <locale.h>
@@ -16,22 +16,22 @@
 int main(void) {
     setlocale(LC_CTYPE, "");
 
-    // The badge: decode once with a libc buffer and hand it to the screen.
-    char badgePath[1200];
+    // The banner: decode once with a libc buffer and hand it to the screen.
+    char bannerPath[1200];
     const char *root = getenv("PRIMEAGEN_ROOT");
     if (root != nullptr)
-        (void) snprintf(badgePath, sizeof badgePath, "%s/resources/>w<.png", root);
+        (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/banner.png", root);
     else
-        (void) snprintf(badgePath, sizeof badgePath, "resources/>w<.png");
-    FILE *badgeFile = fopen(badgePath, "rb");
-    if (badgeFile != nullptr) {
+        (void) snprintf(bannerPath, sizeof bannerPath, "resources/banner.png");
+    FILE *bannerFile = fopen(bannerPath, "rb");
+    if (bannerFile != nullptr) {
         static uint8_t pngBytes[1u << 20];
-        size_t length = fread(pngBytes, 1, sizeof pngBytes, badgeFile);
-        (void) fclose(badgeFile);
+        size_t length = fread(pngBytes, 1, sizeof pngBytes, bannerFile);
+        (void) fclose(bannerFile);
         uint8_t *rgba = nullptr;
-        uint32_t badgeWidth = 0, badgeHeight = 0;
-        if (Png_decodeMalloc(pngBytes, length, &rgba, &badgeWidth, &badgeHeight) == PNG_OK)
-            PrimeagenScreen_setBadge(rgba, badgeWidth, badgeHeight);
+        uint32_t bannerWidth = 0, bannerHeight = 0;
+        if (Png_decodeMalloc(pngBytes, length, &rgba, &bannerWidth, &bannerHeight) == PNG_OK)
+            PrimeagenScreen_setBanner(rgba, bannerWidth, bannerHeight);
     }
 
     Tui tui = Tui();
@@ -82,7 +82,7 @@ int main(void) {
         }
         if (paint) {
             if (home) {
-                PrimeagenScreen_renderHome(&screen, "Primeagen", menuText, 3, 0, PrimeagenScreen_badge());
+                PrimeagenScreen_renderHome(&screen, "Primeagen", menuText, 3, 0, PrimeagenScreen_banner());
             } else {
                 PrimeagenScreenState state = {0};
                 state.tui = &tui;

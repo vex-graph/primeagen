@@ -1,4 +1,6 @@
-# Primeagen >w<
+![Primeagen](resources/banner.png)
+
+# Primeagen
 
 ## Current State
 
