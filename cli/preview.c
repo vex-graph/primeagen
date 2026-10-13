@@ -48,42 +48,66 @@ int main(void) {
     (void) noecho();
     (void) keypad(stdscr, true);
     (void) curs_set(0);
+    // Poll instead of waiting for a key: a zoom, a fullscreen toggle or a window
+    // drag changes the terminal size, and ncurses can consume that change itself
+    // (updating its internal screen) without ever handing the app a KEY_RESIZE —
+    // so an app that only reacts to keys never revalidates. A 100 ms tick lets the
+    // loop notice the new size and repaint; nothing is painted while it is idle.
+    (void) wtimeout(stdscr, PRIMEAGEN_SCREEN_POLL_MS);
     if (has_colors()) {
         (void) start_color();
         (void) use_default_colors();
     }
 
-    static const char *menu[] = { "People", "Servers", "Settings" };
+    static const char *menuText[] = { "People", "Servers", "Settings" };
     PrimeagenScreen screen;
     PrimeagenScreen_init(&screen);
     int home = 1;
     int running = 1;
     int focusPanel = 0;
+    int paint = 1;
+    size_t lastRows = 0, lastColumns = 0;
     while (running) {
         int rows = 0, columns = 0;
         getmaxyx(stdscr, rows, columns);
-        if (!PrimeagenScreen_bind(&screen, (size_t) rows, (size_t) columns))
+        // A zoom, fullscreen or drag is a SIZE CHANGE, and it is revalidated here —
+        // before painting — rather than trusting a KEY_RESIZE that may never come.
+        bool resized = (size_t) rows != lastRows || (size_t) columns != lastColumns;
+        (void) PrimeagenScreen_revalidate(&screen, rows, columns);
+        if (!PrimeagenScreen_isBound(&screen))
             break;
-        if (home) {
-            PrimeagenScreen_renderHome(&screen, "Primeagen", menu, 3, 0, PrimeagenScreen_badge());
-        } else {
-            PrimeagenScreenState state = {0};
-            state.tui = &tui;
-            state.focused = true;
-            state.focusPanel = focusPanel;
-            (void) PrimeagenScreen_renderChat(&screen, &state);
+        if (resized) {
+            (void) clear();     // nothing stale survives the change
+            paint = 1;
         }
-        if (!PrimeagenScreen_present(&screen, stdscr))
-            break;
+        if (paint) {
+            if (home) {
+                PrimeagenScreen_renderHome(&screen, "Primeagen", menuText, 3, 0, PrimeagenScreen_badge());
+            } else {
+                PrimeagenScreenState state = {0};
+                state.tui = &tui;
+                state.focused = true;
+                state.focusPanel = focusPanel;
+                (void) PrimeagenScreen_renderChat(&screen, &state);
+            }
+            if (!PrimeagenScreen_present(&screen, stdscr))
+                break;
+            paint = 0;
+        }
+        lastRows = (size_t) rows;
+        lastColumns = (size_t) columns;
         int key = getch();
-        if (key == 'q' || key == 'Q')
-            running = 0;
-        else if (key == '1')
-            home = 1;
-        else if (key == '2')
-            home = 0;
-        else if (key == 'f')                       // cycle which panel owns focus
-            focusPanel = (focusPanel + 1) % 3;
+        if (key == ERR)
+            continue;           // idle tick: re-check the size, paint nothing
+        paint = 1;
+        switch (PrimeagenScreen_classify(key)) {
+            case PRIMEAGEN_SCREEN_EVENT_QUIT:  running = 0; break;
+            case PRIMEAGEN_SCREEN_EVENT_HOME:  home = 1; break;
+            case PRIMEAGEN_SCREEN_EVENT_CHAT:  home = 0; break;
+            case PRIMEAGEN_SCREEN_EVENT_FOCUS: focusPanel = (focusPanel + 1) % 3; break;
+            case PRIMEAGEN_SCREEN_EVENT_RESIZE: break;   // handled by the size check
+            default: break;
+        }
     }
     endwin();
     PrimeagenScreen_free(&screen);

@@ -505,8 +505,13 @@ int main(int argc, char **argv) {
         int chatColumns = columns - chatLeft;
         int oldRows, oldColumns;
         Tui_getSize(&state, &oldRows, &oldColumns);
-        if (oldRows != rows || oldColumns != chatColumns)
+        if (oldRows != rows || oldColumns != chatColumns) {
             ok = Tui_setSize(&state, rows, chatColumns);
+            // A zoom, a fullscreen toggle or a drag changes the size; ncurses can
+            // consume that change itself, so clear before repainting and never let
+            // stale cells survive a resize.
+            (void) clear();
+        }
         size_t needed = Tui_getRowCapacity(&state);
         if ((size_t) columns + 1 > needed)
             needed = (size_t) columns + 1;

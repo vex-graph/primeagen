@@ -35,6 +35,10 @@
 #define PRIMEAGEN_SCREEN_MIN_COLUMNS 90
 #define PRIMEAGEN_SCREEN_MIN_ROWS 20
 #define PRIMEAGEN_SCREEN_TOO_SMALL "Rendering error! Must be at least 90 x 20 to resolve the whole thing"
+// How often a terminal host re-checks the size while idle (ms). A zoom, a
+// fullscreen toggle or a window drag must revalidate; ncurses can consume the
+// size change itself and never deliver KEY_RESIZE, so the host must poll.
+#define PRIMEAGEN_SCREEN_POLL_MS 100
 
 typedef struct PrimeagenScreen {
     uint32_t *cells;    // codepoint plane
@@ -51,6 +55,28 @@ bool PrimeagenScreen_bind(PrimeagenScreen *self, size_t rows, size_t columns);
 void PrimeagenScreen_free(PrimeagenScreen *self);
 TerminalCanvas PrimeagenScreen_canvas(PrimeagenScreen *self);
 bool PrimeagenScreen_isBound(const PrimeagenScreen *self);
+
+// --- Terminal events (zoom, fullscreen, window drag) ------------------------
+// A terminal size change is its OWN event, never folded into "repaint when
+// something else happens": a zoom (font size), a fullscreen toggle and a window
+// drag all arrive as a resize, and the frame must be re-bound and re-validated —
+// including the minimum-size notice — the moment it happens.
+typedef enum PrimeagenScreenEvent {
+    PRIMEAGEN_SCREEN_EVENT_NONE = 0,   // not a terminal event (an ordinary key)
+    PRIMEAGEN_SCREEN_EVENT_RESIZE,     // zoom / fullscreen / drag: revalidate now
+    PRIMEAGEN_SCREEN_EVENT_HOME,
+    PRIMEAGEN_SCREEN_EVENT_CHAT,
+    PRIMEAGEN_SCREEN_EVENT_FOCUS,
+    PRIMEAGEN_SCREEN_EVENT_QUIT,
+} PrimeagenScreenEvent;
+
+// Classify one ncurses key. Pure: the host can decide what to do before acting.
+PrimeagenScreenEvent PrimeagenScreen_classify(int key);
+
+// Apply a size change: re-bind to the new extent and report whether the frame is
+// still renderable (>= the advertised minimum). Always honoured — never deferred
+// to a later "settle". The caller repaints afterwards.
+bool PrimeagenScreen_revalidate(PrimeagenScreen *self, int rows, int columns);
 
 // Resident state the screen reads (all borrowed).
 typedef struct PrimeagenScreenState {

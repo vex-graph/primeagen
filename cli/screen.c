@@ -131,7 +131,10 @@ void PrimeagenScreen_setBadge(const uint8_t *rgba, uint32_t width, uint32_t heig
     size_t rampCount = 0;
     const uint32_t *ramp = TerminalImage_rampPurple(&rampCount);
     (void) TerminalImage_setColorRamp(&s_badge, ramp, rampCount);
-    TerminalImage_setJitter(&s_badge, 30, 11);
+    // Which letter reads light and which reads dark is randomized per cell, not
+    // luminance-ordered — the palette's whole range (≈30% up to near-white).
+    TerminalImage_setPaletteScatter(&s_badge, (uint8_t) rampCount);
+    TerminalImage_setJitter(&s_badge, 20, 11);
     TerminalImage_setStyle(&s_badge, 0);
     (void) TerminalImage_setNoise(&s_badge, PRIMEAGEN_SCREEN_NOISE_ALPHABET, PRIMEAGEN_SCREEN_NOISE_COLOR);
     TerminalImage_setNoiseStyle(&s_badge, TERMINAL_STYLE_DIM);
@@ -149,6 +152,27 @@ TerminalCanvas PrimeagenScreen_canvas(PrimeagenScreen *self) {
     // unfocused panel's selection) distinguishable from a highlight.
     return TerminalCanvas_6((*self).cells, (*self).styles, (*self).fg, (*self).bg,
                             (*self).columns, (*self).rows);
+}
+
+PrimeagenScreenEvent PrimeagenScreen_classify(int key) {
+    switch (key) {
+        case KEY_RESIZE: return PRIMEAGEN_SCREEN_EVENT_RESIZE;
+        case '1':        return PRIMEAGEN_SCREEN_EVENT_HOME;
+        case '2':        return PRIMEAGEN_SCREEN_EVENT_CHAT;
+        case 'f':        return PRIMEAGEN_SCREEN_EVENT_FOCUS;
+        case 'q':
+        case 'Q':        return PRIMEAGEN_SCREEN_EVENT_QUIT;
+        default:         return PRIMEAGEN_SCREEN_EVENT_NONE;
+    }
+}
+
+bool PrimeagenScreen_revalidate(PrimeagenScreen *self, int rows, int columns) {
+    if (rows <= 0 || columns <= 0)
+        return false;
+    if (!PrimeagenScreen_bind(self, (size_t) rows, (size_t) columns))
+        return false;
+    return (size_t) rows >= PRIMEAGEN_SCREEN_MIN_ROWS
+        && (size_t) columns >= PRIMEAGEN_SCREEN_MIN_COLUMNS;
 }
 
 // --- pens -------------------------------------------------------------------
