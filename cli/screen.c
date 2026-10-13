@@ -89,6 +89,30 @@ void PrimeagenScreen_free(PrimeagenScreen *self) {
     memset(self, 0, sizeof(*self));
 }
 
+// The app's badge: borrowed pixels kept as a toolkit image. White paper is
+// inverted to blank and the app's palette scatters the ink (see the caller).
+static TerminalImage s_badge;
+static bool s_hasBadge = false;
+
+void PrimeagenScreen_setBadge(const uint8_t *rgba, uint32_t width, uint32_t height) {
+    if (rgba == nullptr || width == 0 || height == 0) {
+        s_hasBadge = false;
+        s_badge = TerminalImage_0();
+        return;
+    }
+    s_badge = TerminalImage((uint8_t*) (uintptr_t) rgba, (size_t) width, (size_t) height);
+    TerminalImage_setInvert(&s_badge, true);          // white paper -> blank cell
+    size_t rampCount = 0;
+    const uint32_t *ramp = TerminalImage_rampPurple(&rampCount);
+    (void) TerminalImage_setColorRamp(&s_badge, ramp, rampCount);
+    TerminalImage_setJitter(&s_badge, 30, 11);
+    TerminalImage_setStyle(&s_badge, 0);
+    s_hasBadge = true;
+}
+
+const TerminalImage *PrimeagenScreen_badge(void) { return s_hasBadge ? &s_badge : nullptr; }
+bool PrimeagenScreen_hasBadge(void) { return s_hasBadge; }
+
 TerminalCanvas PrimeagenScreen_canvas(PrimeagenScreen *self) {
     if (!PrimeagenScreen_isBound(self))
         return TerminalCanvas_0();

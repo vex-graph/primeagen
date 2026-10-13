@@ -69,6 +69,13 @@ void PrimeagenScreen_renderHome(PrimeagenScreen *self, const char *title,
 // CHAT: the three-column layout over the resident Tui state.
 bool PrimeagenScreen_renderChat(PrimeagenScreen *self, const PrimeagenScreenState *state);
 
+// The app's badge image (white paper + dark ink): the host decodes its own PNG
+// and hands the pixels here; the screen inverts the paper and lets the caller's
+// palette treat it. NULL/zero clears it.
+void PrimeagenScreen_setBadge(const uint8_t *rgba, uint32_t width, uint32_t height);
+const TerminalImage *PrimeagenScreen_badge(void);
+bool PrimeagenScreen_hasBadge(void);
+
 // Blit the grid to ncurses in ONE pass (wide cells + colour pairs).
 bool PrimeagenScreen_present(const PrimeagenScreen *self, WINDOW *win);
 

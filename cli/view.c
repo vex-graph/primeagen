@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 #include "cli/view.h"
 #include "cli/appearance.h"
+#include "cli/screen.h"
 #include "tui/utf8.h"
 #include "hot/hot.h"
 #include "annotation/definition.h"
@@ -188,6 +189,11 @@ bool Primeagen_setAppearance(const char *presetName) {
     return true;
 }
 
+bool Primeagen_setBadge(const uint8_t *rgba, uint32_t width, uint32_t height) {
+    PrimeagenScreen_setBadge(rgba, width, height);
+    return true;
+}
+
 bool Primeagen_draw(Tui *state, bool owo, bool focused, bool sessionMode, bool busy, bool failed,
                     char *row, uint8_t *styles, size_t cap) {
     erase();
@@ -302,7 +308,8 @@ const void *VkModuleGetTrampolines(uint32_t *count) {
     static const struct { const char *name; void *fn; } exports[] = {
         {"Primeagen_draw", (void*) Primeagen_draw}, {"Primeagen_command", (void*) Primeagen_command},
         {"Primeagen_drawPanels", (void*) Primeagen_drawPanels},
-        {"Primeagen_setAppearance", (void*) Primeagen_setAppearance}
+        {"Primeagen_setAppearance", (void*) Primeagen_setAppearance},
+        {"Primeagen_setBadge", (void*) Primeagen_setBadge}
     };
     if (count == nullptr)
         return nullptr;
