@@ -106,10 +106,10 @@ static uint32_t s_noiseSeed = 1;
 // app's decor. Primeagen owns the alphabet and the gray; the toolkit ships no art.
 #define PRIMEAGEN_SCREEN_NOISE_ALPHABET \
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789%@#$&*+=/<>"
-#define PRIMEAGEN_SCREEN_NOISE_COLOR TERMINAL_RGB(0x3A, 0x3A, 0x44)
-// Not every blank cell: a thinned field reads as a backdrop and leaves the
-// app's own picture legible instead of burying it.
-#define PRIMEAGEN_SCREEN_NOISE_DENSITY 55
+#define PRIMEAGEN_SCREEN_NOISE_COLOR TERMINAL_RGB(0x70, 0x70, 0x86)
+// How much of the panel the decor covers. The field fills the panel edge to
+// edge; this only decides how solid it looks.
+#define PRIMEAGEN_SCREEN_NOISE_DENSITY 80
 
 // Re-scatter the paper texture. Called on EVERY render, so a revalidate (which
 // re-renders) draws a fresh random field while a fixed seed stays reproducible.
