@@ -39,15 +39,16 @@
  *     char model[SETTINGS_MODEL_MAX];       // selected model id ("" = unset)
  *     bool owo;                             // canonical C personality prompt on
  *     uint32_t consent;                     // SettingsConsent (prompt / deny)
+ *     char appearance[SETTINGS_APPEARANCE_MAX]; // TerminalAppearance preset name
  *   }
  *
  * FUNCTION REGISTRY:
  * ----------------------------------------------------------------------------
  * Constructors:
- *   - Settings_0()                       : defaults (unset provider/model, owo off, prompt)
+ *   - Settings_0()                       : defaults (unset provider/model, owo off, prompt, striped)
  * Setters / Getters (bounded, reject-overflow keeps prior):
  *   - Settings_setProvider/getProvider, setModel/getModel,
- *     setOwo/isOwo, setConsent/getConsent
+ *     setOwo/isOwo, setConsent/getConsent, setAppearance/getAppearance
  * Path:
  *   - Settings_resolvePath(dest, cap)    : <app-data root>/settings (manifest)
  * Persistence:
@@ -74,7 +75,19 @@ static bool copyBounded(char *dest, size_t cap, const char *value) {
 }
 
 Settings Settings_0(void) {
-    return (Settings) {0};  // provider/model unset, owo off, consent = PROMPT (0)
+    Settings settings = {0};  // provider/model unset, owo off, consent = PROMPT (0)
+    copyBounded(settings.appearance, SETTINGS_APPEARANCE_MAX, SETTINGS_APPEARANCE_DEFAULT);
+    return settings;
+}
+
+bool Settings_setAppearance(Settings *self, const char *value) {
+    if (self == nullptr)
+        return false;
+    return copyBounded((*self).appearance, SETTINGS_APPEARANCE_MAX, value);
+}
+
+const char *Settings_getAppearance(const Settings *self) {
+    return (self && (*self).appearance[0] != '\0') ? (*self).appearance : SETTINGS_APPEARANCE_DEFAULT;
 }
 
 bool Settings_setProvider(Settings *self, const char *value) {
@@ -158,6 +171,8 @@ static bool applyLine(Settings *parsed, const char *name, size_t nameLength, con
             return Settings_setConsent(parsed, SETTINGS_CONSENT_DENY);
         return false;
     }
+    if (nameLength == 10 && memcmp(name, "appearance", 10) == 0)
+        return Settings_setAppearance(parsed, value);
     return false;
 }
 
@@ -245,9 +260,10 @@ bool Settings_save(const Settings *self, const char *path) {
         return false;
     }
     char body[SETTINGS_BYTES_MAX];
-    int length = snprintf(body, sizeof body, "provider=%s\nmodel=%s\nowo=%d\nconsent=%s\n",
+    int length = snprintf(body, sizeof body, "provider=%s\nmodel=%s\nowo=%d\nconsent=%s\nappearance=%s\n",
                           (*self).provider, (*self).model, (*self).owo ? 1 : 0,
-                          (*self).consent == SETTINGS_CONSENT_DENY ? "deny" : "prompt");
+                          (*self).consent == SETTINGS_CONSENT_DENY ? "deny" : "prompt",
+                          Settings_getAppearance(self));
     if (length <= 0 || (size_t) length >= sizeof body) {
         close(descriptor);
         unlink(temporary);

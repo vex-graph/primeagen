@@ -14,6 +14,10 @@
 
 #define SETTINGS_PROVIDER_MAX 32
 #define SETTINGS_MODEL_MAX 128
+#define SETTINGS_APPEARANCE_MAX 32
+// The look the terminal frame is drawn with. Names come from the toolkit's
+// TerminalAppearance_presetName(i) registry; an unknown name falls back there.
+#define SETTINGS_APPEARANCE_DEFAULT "ascii-striped"
 
 typedef enum SettingsConsent {
     SETTINGS_CONSENT_PROMPT = 0,  // ask before every tool
@@ -25,6 +29,7 @@ typedef struct Settings {
     char model[SETTINGS_MODEL_MAX];
     bool owo;
     uint32_t consent;
+    char appearance[SETTINGS_APPEARANCE_MAX];   // TerminalAppearance preset name
 } Settings;
 
 Settings Settings_0(void);
@@ -33,11 +38,13 @@ bool Settings_setProvider(Settings *self, const char *value);
 bool Settings_setModel(Settings *self, const char *value);
 void Settings_setOwo(Settings *self, bool value);
 bool Settings_setConsent(Settings *self, uint32_t value);
+bool Settings_setAppearance(Settings *self, const char *value);
 
 const char *Settings_getProvider(const Settings *self);
 const char *Settings_getModel(const Settings *self);
 bool Settings_isOwo(const Settings *self);
 uint32_t Settings_getConsent(const Settings *self);
+const char *Settings_getAppearance(const Settings *self);
 
 // Resolve <app-data root>/settings (mounting + ensuring the manifest once).
 // false when the manifest cannot mount.
