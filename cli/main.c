@@ -4,6 +4,7 @@
 #include "session/session_bridge.h"
 #include "cli/view.h"
 #include "cli/update.h"
+#include "cli/appearance.h"
 #include "hot/manifest.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -298,6 +299,7 @@ int main(int argc, char **argv) {
     PrimeagenDrawFn view = draw;
     PrimeagenPanelsFn panelsView = Primeagen_drawPanels;
     PrimeagenCommandFn localCommand = command;
+    PrimeagenAppearanceFn appearanceView = Primeagen_setAppearance;
     if (updatePayload != nullptr || updateChecksum != nullptr) {
         uint32_t loaded;
         if (updatePayload == nullptr || updateChecksum == nullptr ||
@@ -313,6 +315,7 @@ int main(int argc, char **argv) {
         view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
         localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
         panelsView = (PrimeagenPanelsFn) Hot_get_symbol(hot, "Primeagen_drawPanels");
+        appearanceView = (PrimeagenAppearanceFn) Hot_get_symbol(hot, "Primeagen_setAppearance");
         if (view == nullptr || localCommand == nullptr || panelsView == nullptr) {
             HotShutdown(hot);
             Tui_free(&state);
@@ -333,6 +336,20 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+#include "src/settings.h"
+
+    // Apply the persisted look before the first frame: the appearance lives in the
+    // view module, so it is set through the same pointer the draws use.
+    Settings settings = Settings_0();
+    char settingsPath[600];
+    if (Settings_resolvePath(settingsPath, sizeof settingsPath))
+        (void) Settings_load(&settings, settingsPath);
+    // Consent is loaded with the record; the C-TUI tool gate consumes it when
+    // the consent prompt lands. Referencing the type keeps the read explicit.
+    SettingsConsent consent = (SettingsConsent) Settings_getConsent(&settings);
+    (void) consent;
+    (void) appearanceView(Settings_getAppearance(&settings));
+
     setlocale(LC_CTYPE, ""); // text symbols, not emoji; ASCII fallback if unavailable
     SCREEN *screen = newterm(nullptr, stdout, stdin);
     if (screen == nullptr) {
@@ -434,6 +451,10 @@ int main(int argc, char **argv) {
                 view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
                 localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
                 panelsView = (PrimeagenPanelsFn) Hot_get_symbol(hot, "Primeagen_drawPanels");
+                PrimeagenAppearanceFn refreshed = (PrimeagenAppearanceFn) Hot_get_symbol(hot, "Primeagen_setAppearance");
+                if (refreshed != nullptr)
+                    appearanceView = refreshed;
+                (void) appearanceView(PrimeagenAppearance_name());
             }
             char notice[192];
             snprintf(notice, sizeof(notice), updated ? "Updated running CLI: generation %llu -> %llu. Resumed." : "Update rejected; running generation %llu retained. Resumed.",

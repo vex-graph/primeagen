@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 #include "cli/view.h"
+#include "cli/appearance.h"
 #include "tui/utf8.h"
 #include "hot/hot.h"
 #include "annotation/definition.h"
@@ -120,7 +121,9 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     mvaddstr(0, left + columns - 15, "[Clear]");
     mvaddstr(0, left + columns - 7, "[Quit]");
     attroff(COLOR_PAIR(VIEW_ACCENT));
-    mvhline(1, left, ACS_HLINE, columns);
+    // The horizontal rule is a toolkit CONNECTOR run (junctions/striping), not a
+    // bare ACS_HLINE; the chosen appearance decides the glyphs.
+    PrimeagenAppearance_drawRule(stdscr, 1, left, columns);
     size_t first = Tui_getFirstVisibleRow(state);
     size_t total = Tui_getVisualRowCount(state);
     size_t height = Tui_getViewportHeight(state);
@@ -159,7 +162,7 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
         mvaddnstr(4, left + 1, "Preview only: no model/session attached.", columns - 2);
         mvaddnstr(5, left + 1, "Select OpenCode to return to your chat.", columns - 2);
     }
-    mvhline(rows - 4, left, ACS_HLINE, columns);
+    PrimeagenAppearance_drawRule(stdscr, rows - 4, left, columns);
     attron(COLOR_PAIR(VIEW_STATUS) | A_DIM);
     mvaddnstr(rows - 3, left + 1, sessionMode ? "Ctrl-T select text | scroll: wheel/Up-Down | /help | /update | Ctrl-Q quit" : "/connect (click here) | Ctrl-T select | /help | Ctrl-Q quit", columns - 2);
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
@@ -177,6 +180,11 @@ static bool drawRegion(Tui *state, bool owo, bool focused, bool sessionMode, boo
     attroff(COLOR_PAIR(VIEW_STATUS) | A_DIM);
     curs_set(focused && selection == 0 ? 1 : 0);
     move(rows - 2, left + 2 + (int) (selection == 0 ? length - offset : 0));
+    return true;
+}
+
+bool Primeagen_setAppearance(const char *presetName) {
+    PrimeagenAppearance_use(presetName);
     return true;
 }
 
@@ -293,7 +301,8 @@ bool Primeagen_drawPanels(Tui *state, bool owo, bool focused, bool sessionMode, 
 const void *VkModuleGetTrampolines(uint32_t *count) {
     static const struct { const char *name; void *fn; } exports[] = {
         {"Primeagen_draw", (void*) Primeagen_draw}, {"Primeagen_command", (void*) Primeagen_command},
-        {"Primeagen_drawPanels", (void*) Primeagen_drawPanels}
+        {"Primeagen_drawPanels", (void*) Primeagen_drawPanels},
+        {"Primeagen_setAppearance", (void*) Primeagen_setAppearance}
     };
     if (count == nullptr)
         return nullptr;
