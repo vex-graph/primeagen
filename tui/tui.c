@@ -29,7 +29,7 @@
  * host-owned cell flags carry formatting and speaker styles, never ANSI strings.
  * output are distinct states: appends preserve a scrolled viewport's old content.
  *
- * This preview owns ordinary display buffers, not an ecosystem allocator or
+ * This preview owns ordinary display buffers, not an vexgraph-ecosystem-gitrepo allocator or
  * persistent history backend. Shallow copying a live Tui is outside the contract.
  * No JSON parser is duplicated: cold structure projection uses Vexspoke's actual
  * Json_writeString for the quoted input field. UTF-8 transcript display preserves

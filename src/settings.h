@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "c23/constructor.h"
+
 // src/settings.h — persisted C-TUI settings (provider/model/personality/consent).
 //
 // One bounded record, loaded from and saved to the manifest app-data root
@@ -33,6 +35,7 @@ typedef struct Settings {
 } Settings;
 
 Settings Settings_0(void);
+#define Settings(...) CONSTRUCTOR_DISPATCH(Settings, __VA_ARGS__)
 
 bool Settings_setProvider(Settings *self, const char *value);
 bool Settings_setModel(Settings *self, const char *value);

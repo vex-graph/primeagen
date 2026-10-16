@@ -2,7 +2,7 @@
 #define PRIMEAGEN_TOOLS_FS_H
 #include <stddef.h>
 #include <sys/types.h>
-/* Cold POSIX consumer adapter, not an ecosystem filesystem driver. Caller owns
+/* Cold POSIX consumer adapter, not an vexgraph-ecosystem-gitrepo filesystem driver. Caller owns
  * root directory fd and output buffers. Stable trusted directory tree required;
  * descriptor-relative no-symlink admission is not a hostile-writer sandbox.
  * Regular files only, hardlinks reject. No recursive mutations. POSIX filesystem

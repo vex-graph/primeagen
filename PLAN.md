@@ -2,8 +2,8 @@
 
 > Planning document. Nothing here is implemented; it records the agreed direction
 > and the order of work so each slice can be built and proved in turn. Governed by
-> the workspace constitution (`gist/PREFERENCES.md`), `primeagen-preferences.md`,
-> `drivers/darkbase/darkbase-preferences.md` and `tests/test-preferences.md`.
+> the workspace constitution (`../../../PREFERENCES.md`), `primeagen-preferences.md`,
+> `../../drivers/darkbase-engine/darkbase-preferences.md` and `tests/test-preferences.md`.
 
 ## The goal
 
