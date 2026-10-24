@@ -1,7 +1,8 @@
 # Primeagen — the real thing (plan)
 
-> Planning document. Nothing here is implemented; it records the agreed direction
-> and the order of work so each slice can be built and proved in turn. Governed by
+> Planning document. It records the agreed direction and order of work. The first
+> four-folder terminal tree mock is implemented, but the screen-toolkit migration and all
+> persistence/provider slices below remain open. Governed by
 > the workspace constitution (`../../../PREFERENCES.md`), `primeagen-preferences.md`,
 > `../../drivers/darkbase-engine/darkbase-preferences.md` and `tests/test-preferences.md`.
 
@@ -43,12 +44,26 @@ reflection; R5 decides meaning.
 Each slice ships with its owner test, `-Wall -Wextra -Werror`, and ready evidence
 before the next begins. No slice is "started" to have something moving.
 
-### S0 — the live frame (unblocks everything visual)
+### S0 — toolkit-backed live frame (still open)
 
-Wire `cli/screen.c` into the live app: `Primeagen_drawPanels`/`Primeagen_draw`
-become `bind(getmaxyx) → renderHome/renderChat → present`, with a HOME screen
-state so the landing menu is the start screen. Retire the direct-ncurses view and
-the old-layout assertions in `view_test.c`/`main_test.c`.
+The live view now uses a Semicolon-style collapsible IDE tree in a filled,
+borderless explorer panel beside the right-side chat interface. A small breathing
+gap replaces a drawn divider; rows use two-cell depth steps, Nerd Font icons and a
+full-width selection rectangle. The tree has exactly four top-level folders: chats,
+users, servers (one server with one `#general` channel), and private chat. Selecting
+a tree entry selects the chat context without changing the right pane into a
+category preview. Nerd Font disclosure/folder/file icons identify rows; Ctrl-B
+hides/restores the tree, while folder folding and tree scrolling keep
+their own state. Only Users/OpenCode connects to the resident session; every
+other entry is mock-only and cannot expose or submit its draft/history. No tree
+data, chat history, server membership, rules, model control, or save action is
+persisted. This assessment surface still uses direct ncurses in `cli/view.c`.
+
+Remaining toolkit slice: wire `cli/screen.c` into the live app so
+`Primeagen_drawPanels`/`Primeagen_draw` become
+`bind(getmaxyx) → renderHome/renderChat → present`, with a HOME screen state.
+Retire the direct-ncurses view only after the new live frame preserves these four
+contexts and its owner tests prove navigation, draft isolation and resize behavior.
 *Definition of done:* `./primeagen` shows the frame; resize/zoom revalidates; the
 suite is green on the new layout.
 

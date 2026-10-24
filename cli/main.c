@@ -36,9 +36,9 @@
  * ============================================================================
  * OWNED STATE:
  *   static volatile sig_atomic_t stopped : signal-safe shutdown request only.
- *   main locals own Tui, SessionBridge, ncurses SCREEN and growable row buffer.
- *   panel/selection/listWidth are resident presentation-only navigation values;
- *   preview examples never become real model/session identities.
+ *   main locals own Tui, SessionBridge, ncurses SCREEN, growable row buffer, and
+ *   TerminalTreeView. The tree owns fold/selection/scroll state; labels are static
+ *   borrowed literals. panel/selection/listWidth choose only the right chat content.
  *   sessionHost is a borrowed launcher-supplied path; no credentials are owned.
  * COLOR: draw() applies a host palette including code and error text,
  *   initialized only when has_colors(). A monochrome terminal falls back to the
@@ -62,8 +62,12 @@
  *   int main(int argc, char **argv)
  *     --owo / --help / --session-host / paired host --bridge-read/write fd admission;
  *     paired --update-payload/--update-checksum enable trusted local cold updates.
- *     --list-width overrides the named list-column default. Ctrl-P/Ctrl-S choose
- *     People/Servers, Ctrl-O returns to the existing OpenCode chat.
+ *     Builds exactly four top-level tree folders and their mock children. Tree row
+ *     clicks toggle folders/select chats; Up/Down select visible rows, Left/Right
+ *     fold, wheel scrolls the tree, and Ctrl-B hides/restores the whole explorer.
+ *     Only users/OpenCode connects to live Tui.
+ *     --list-width overrides the named tree-column default. Ctrl-P/S/G/N select
+ *     Users/Servers/Chats/Private; Ctrl-O returns to the live OpenCode chat.
  *     --select-text / Ctrl-T disables application mouse reporting and temporarily
  *     opens the current chat full-width for terminal-native drag selection/copy.
  *     Terminal owns selection/clipboard; switching restores panel navigation.
@@ -71,8 +75,10 @@
  * Contracts:
  *   Requires tty stdin/stdout and usable TERM. Non-tty rejects before ncurses.
  *   Small terminals show resize guidance; quit remains available by Ctrl-Q.
- *   Mouse support depends on terminal; keyboard provides Up/Down,
- *   End, Ctrl-L clear, Tab focus, Enter send, Backspace, Ctrl-Q quit. Resize
+ *   Mouse support depends on terminal; Up/Down navigate the selected tree except
+ *   in live chat, where they scroll history. Tree rows resolve through the toolkit
+ *   viewport so clicks honor scroll offsets and blank rows do nothing. End, Ctrl-L
+ *   clear, Tab focus, Enter send, Backspace, Ctrl-Q quit. Resize
  *   recalculates all bounds. Input is printable ASCII; transcript controls are
  *   escaped by Tui. X10/SGR mouse bytes are decoded before the old ncurses mouse
  *   ABI can discard button 5; wheel 64/65 are distinct, never modifier aliases.
@@ -89,7 +95,7 @@
  *   Clear changes display only, not remote history. getch uses 100ms slices. Screen
  *   calls are host terminal IO, not a realtime/bounded-join guarantee. Normal
  *   exits/SIGINT/SIGTERM restore mode; SIGKILL/crashes cannot promise restoration.
- *   HotModule owns reloadable Primeagen_draw/Primeagen_command code. Tui, bridge,
+ *   HotModule owns reloadable view/command code. Tui, TerminalTreeView, bridge,
  *   permission/session host and screen remain resident. /update pauses new turns,
  *   finishes the existing turn, synchronously resolves, then resumes; rollback
  *   recovery-required stops rather than falsely resuming. No remote update.
@@ -99,6 +105,7 @@
 #define TUI_CTRL_Q 17
 #define TUI_CTRL_L 12
 #define TUI_CTRL_T 20
+#define TUI_CTRL_B 2
 /* Distinct ncurses user-key codes; not bit masks in the v1 MEVENT ABI. */
 #define TUI_MOUSE_SGR (KEY_MAX + 1)
 #define TUI_MOUSE_X10 (KEY_MAX + 2)
@@ -236,6 +243,7 @@ int main(int argc, char **argv) {
     bool connectRequested = false;
     int panel = PRIMEAGEN_PANEL_PEOPLE, selection = 0;
     int listWidth = PRIMEAGEN_LIST_WIDTH_DEFAULT;
+    bool treeVisible = true;
     int readFd = -1, writeFd = -1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--owo") == 0)
@@ -271,7 +279,7 @@ int main(int argc, char **argv) {
                 writeFd = (int) value;
         }
         else if (strcmp(argv[i], "--help") == 0) {
-            puts("primeagen tui [--owo] [--list-width CELLS] [--select-text]: offline three-column browser; Ctrl-T toggles native text selection; Ctrl-P People, Ctrl-S Servers, Ctrl-O OpenCode; /connect uses existing login; approvals use o/a/r; Ctrl-Q exits");
+            puts("primeagen tui [--owo] [--list-width CELLS] [--select-text]: offline IDE-style workspace tree; Ctrl-B hides/restores explorer; Ctrl-T toggles native text selection; Ctrl-P Users, Ctrl-S Servers, Ctrl-G Chats, Ctrl-N Private, Ctrl-O OpenCode; /connect uses existing login; approvals use o/a/r; Ctrl-Q exits");
             return 0;
         } else {
             THROW("unknown TUI argument");
@@ -296,9 +304,45 @@ int main(int argc, char **argv) {
     SessionBridge_setOwo(&bridge, owo);
     if (!Tui_isReady(&state))
         return 1;
+    TerminalTreeView *tree = TerminalTreeView();
+    if (tree == nullptr) {
+        Tui_free(&state);
+        return 1;
+    }
+    TerminalTreeNodeId chatsNode = TerminalTreeView_addChild(tree, TERMINAL_TREE_NO_NODE, "chats", true);
+    TerminalTreeNodeId recentNode = TerminalTreeView_addChild(tree, chatsNode, "recent", true);
+    TerminalTreeNodeId welcomeNode = TerminalTreeView_addChild(tree, recentNode, "Welcome", false);
+    TerminalTreeNodeId projectNotesNode = TerminalTreeView_addChild(tree, recentNode, "Project notes", false);
+    TerminalTreeNodeId usersNode = TerminalTreeView_addChild(tree, TERMINAL_TREE_NO_NODE, "users", true);
+    TerminalTreeNodeId openCodeNode = TerminalTreeView_addChild(tree, usersNode, "OpenCode", false);
+    TerminalTreeNodeId exampleUserNode = TerminalTreeView_addChild(tree, usersNode, "example-user", false);
+    TerminalTreeNodeId serversNode = TerminalTreeView_addChild(tree, TERMINAL_TREE_NO_NODE, "servers", true);
+    TerminalTreeNodeId serverNode = TerminalTreeView_addChild(tree, serversNode, "serverNumber1", true);
+    TerminalTreeNodeId channelNode = TerminalTreeView_addChild(tree, serverNode, "#general", false);
+    TerminalTreeNodeId privateNode = TerminalTreeView_addChild(tree, TERMINAL_TREE_NO_NODE, "private chat", true);
+    TerminalTreeNodeId privateChatNode = TerminalTreeView_addChild(tree, privateNode, "unsaved conversation", false);
+    if (chatsNode == TERMINAL_TREE_NO_NODE || recentNode == TERMINAL_TREE_NO_NODE ||
+        usersNode == TERMINAL_TREE_NO_NODE || openCodeNode == TERMINAL_TREE_NO_NODE ||
+        welcomeNode == TERMINAL_TREE_NO_NODE || projectNotesNode == TERMINAL_TREE_NO_NODE ||
+        exampleUserNode == TERMINAL_TREE_NO_NODE ||
+        serversNode == TERMINAL_TREE_NO_NODE || serverNode == TERMINAL_TREE_NO_NODE ||
+        channelNode == TERMINAL_TREE_NO_NODE || privateNode == TERMINAL_TREE_NO_NODE ||
+        privateChatNode == TERMINAL_TREE_NO_NODE) {
+        TerminalTreeView_free(tree);
+        Tui_free(&state);
+        return 1;
+    }
+    (void) TerminalTreeView_setExpanded(tree, chatsNode, true);
+    (void) TerminalTreeView_setExpanded(tree, recentNode, true);
+    (void) TerminalTreeView_setExpanded(tree, usersNode, true);
+    (void) TerminalTreeView_setExpanded(tree, serversNode, true);
+    (void) TerminalTreeView_setExpanded(tree, serverNode, true);
+    (void) TerminalTreeView_setExpanded(tree, privateNode, true);
+    (void) TerminalTreeView_setSelected(tree, openCodeNode);
     HotModule *hot = nullptr;
     PrimeagenDrawFn view = draw;
     PrimeagenPanelsFn panelsView = Primeagen_drawPanels;
+    PrimeagenTreePanelsFn treePanelsView = Primeagen_drawTreePanels;
     PrimeagenCommandFn localCommand = command;
     PrimeagenAppearanceFn appearanceView = Primeagen_setAppearance;
     PrimeagenBannerFn bannerView = Primeagen_setBanner;
@@ -311,20 +355,23 @@ int main(int argc, char **argv) {
             (hot = Hot_init("primeagen")) == nullptr ||
             !Primeagen_update(hot, updatePayload, updateChecksum, &loaded)) {
             HotShutdown(hot);
+            TerminalTreeView_free(tree);
             Tui_free(&state);
             return 1;
         }
         view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
         localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
         panelsView = (PrimeagenPanelsFn) Hot_get_symbol(hot, "Primeagen_drawPanels");
+        treePanelsView = (PrimeagenTreePanelsFn) Hot_get_symbol(hot, "Primeagen_drawTreePanels");
         appearanceView = (PrimeagenAppearanceFn) Hot_get_symbol(hot, "Primeagen_setAppearance");
         {
             PrimeagenBannerFn refreshedBanner = (PrimeagenBannerFn) Hot_get_symbol(hot, "Primeagen_setBanner");
             if (refreshedBanner != nullptr)
                 bannerView = refreshedBanner;
         }
-        if (view == nullptr || localCommand == nullptr || panelsView == nullptr) {
+        if (view == nullptr || localCommand == nullptr || panelsView == nullptr || treePanelsView == nullptr) {
             HotShutdown(hot);
+            TerminalTreeView_free(tree);
             Tui_free(&state);
             return 1;
         }
@@ -332,6 +379,7 @@ int main(int argc, char **argv) {
     const char *greeting = sessionMode ? "Primeagen | OpenCode-backed chat; no model request until Enter" : "Primeagen | Type /connect or click /connect below to chat with OpenCode Go. No key is copied; uses your existing login.";
     if (!Tui_add(&state, greeting, strlen(greeting))) {
         HotShutdown(hot);
+        TerminalTreeView_free(tree);
         Tui_free(&state);
         return 1;
     }
@@ -339,6 +387,7 @@ int main(int argc, char **argv) {
         const char *notice = "OpenCode session | read/glob/grep auto | edit/shell/web ask: [o]nce [a]lways [r]eject | Ctrl-Q exits";
         if (!Tui_add(&state, notice, strlen(notice))) {
             HotShutdown(hot);
+            TerminalTreeView_free(tree);
             Tui_free(&state);
             return 1;
         }
@@ -367,14 +416,14 @@ int main(int argc, char **argv) {
         char bannerPath[1200];
         const char *bannerRoot = getenv("PRIMEAGEN_ROOT");
         if (bannerRoot != nullptr) {
-            (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/>w<.png", bannerRoot);
+            (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/w.png", bannerRoot);
         } else {
             char dir[1000];
             (void) snprintf(dir, sizeof dir, "%s", argv[0]);
             char *slash = strrchr(dir, '/');
             if (slash != nullptr)
                 *slash = '\0';
-            (void) snprintf(bannerPath, sizeof bannerPath, "%s/../resources/>w<.png", dir);
+            (void) snprintf(bannerPath, sizeof bannerPath, "%s/../resources/w.png", dir);
         }
         FILE *bannerFile = fopen(bannerPath, "rb");
         if (bannerFile != nullptr) {
@@ -390,6 +439,7 @@ int main(int argc, char **argv) {
     SCREEN *screen = newterm(nullptr, stdout, stdin);
     if (screen == nullptr) {
         HotShutdown(hot);
+        TerminalTreeView_free(tree);
         Tui_free(&state);
         THROW("terminal initialization failed");
         return 1;
@@ -403,6 +453,12 @@ int main(int argc, char **argv) {
         init_pair(TUI_PAIR_INPUT, COLOR_GREEN, -1);
         init_pair(TUI_PAIR_CODE, COLOR_YELLOW, -1);
         init_pair(TUI_PAIR_ERROR, COLOR_RED, -1);
+        init_pair(PRIMEAGEN_PAIR_TREE_BACKGROUND, COLOR_WHITE, COLOR_BLACK);
+        init_pair(PRIMEAGEN_PAIR_TREE_SELECTED, COLOR_WHITE, COLOR_BLUE);
+        init_pair(PRIMEAGEN_PAIR_TREE_FOLDER, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(PRIMEAGEN_PAIR_TREE_CHAT, COLOR_CYAN, COLOR_BLACK);
+        init_pair(PRIMEAGEN_PAIR_TREE_USER, COLOR_MAGENTA, COLOR_BLACK);
+        init_pair(PRIMEAGEN_PAIR_TREE_SERVER, COLOR_GREEN, COLOR_BLACK);
     }
     signal(SIGINT, stop);
     signal(SIGTERM, stop);
@@ -483,10 +539,11 @@ int main(int argc, char **argv) {
                 ok = false; // unresolved is not success/failure resolution; stop
                 break;
             }
-            if (updated) {
+        if (updated) {
                 view = (PrimeagenDrawFn) Hot_get_symbol(hot, "Primeagen_draw");
                 localCommand = (PrimeagenCommandFn) Hot_get_symbol(hot, "Primeagen_command");
                 panelsView = (PrimeagenPanelsFn) Hot_get_symbol(hot, "Primeagen_drawPanels");
+                treePanelsView = (PrimeagenTreePanelsFn) Hot_get_symbol(hot, "Primeagen_drawTreePanels");
                 PrimeagenAppearanceFn refreshed = (PrimeagenAppearanceFn) Hot_get_symbol(hot, "Primeagen_setAppearance");
                 if (refreshed != nullptr)
                     appearanceView = refreshed;
@@ -495,13 +552,15 @@ int main(int argc, char **argv) {
             char notice[192];
             snprintf(notice, sizeof(notice), updated ? "Updated running CLI: generation %llu -> %llu. Resumed." : "Update rejected; running generation %llu retained. Resumed.",
                      (unsigned long long) before, (unsigned long long) Hot_get_generation(hot));
-            ok = view != nullptr && localCommand != nullptr && panelsView != nullptr && Tui_add(&state, notice, strlen(notice));
+            ok = view != nullptr && localCommand != nullptr && panelsView != nullptr && treePanelsView != nullptr && Tui_add(&state, notice, strlen(notice));
             updateRequested = false;
             Tui_setDirty(&state, true);
         }
         int rows, columns;
         getmaxyx(stdscr, rows, columns);
-        int chatLeft = selectText ? 0 : Primeagen_chatLeft(columns, listWidth);
+        int chatLeft = selectText || !treeVisible ? 0 : Primeagen_chatLeft(columns, listWidth);
+        if (chatLeft > 0)
+            ++chatLeft; // an unruled breathing gap replaces the hard divider
         int chatColumns = columns - chatLeft;
         int oldRows, oldColumns;
         Tui_getSize(&state, &oldRows, &oldColumns);
@@ -542,7 +601,8 @@ int main(int argc, char **argv) {
                     ok = refresh() != ERR;
                 }
             } else
-                ok = panelsView(&state, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), sessionFailed, panel, selection, listWidth, row, styles, capacity);
+                ok = treePanelsView(&state, tree, owo, focused, sessionMode, SessionBridge_isBusy(&bridge), sessionFailed, panel, selection,
+                                    treeVisible ? listWidth : 0, row, styles, capacity);
             if (ok && SessionBridge_isAwaiting(&bridge)) {
                 drawApproval(rows, chatLeft, chatColumns);
                 ok = refresh() != ERR;
@@ -551,12 +611,38 @@ int main(int argc, char **argv) {
         }
         if (!ok)
             break;
+        bool liveSelected = panel == PRIMEAGEN_PANEL_PEOPLE && selection == 0;
         int key = getch();
         if (key == TUI_CTRL_Q)
             stopped = 1;
         else if (key == TUI_CTRL_T) {
             selectText = !selectText;
             ok = mouseReporting(!selectText);
+            Tui_setDirty(&state, true);
+        }
+        else if (key == TUI_CTRL_B) {
+            treeVisible = !treeVisible;
+            Tui_setDirty(&state, true);
+        }
+        else if ((key == KEY_UP || key == KEY_DOWN) && !liveSelected) {
+            size_t rowIndex = TerminalTreeView_rowOf(tree, TerminalTreeView_getSelected(tree));
+            size_t count = TerminalTreeView_visibleCount(tree);
+            if (rowIndex != TERMINAL_TREE_NO_ROW && count > 0) {
+                size_t next = key == KEY_UP ? (rowIndex == 0 ? 0 : rowIndex - 1) :
+                              (rowIndex + 1 < count ? rowIndex + 1 : rowIndex);
+                TerminalTreeRow item = TerminalTreeView_rowAt(tree, next);
+                (void) TerminalTreeView_setSelected(tree, item.id);
+                if (panel == PRIMEAGEN_PANEL_PEOPLE && item.id == openCodeNode) {
+                    selection = 0;
+                    focused = true;
+                }
+                Tui_setDirty(&state, true);
+            }
+        }
+        else if ((key == KEY_LEFT || key == KEY_RIGHT) && !liveSelected) {
+            TerminalTreeNodeId selected = TerminalTreeView_getSelected(tree);
+            if (TerminalTreeView_isFolder(tree, selected))
+                (void) TerminalTreeView_setExpanded(tree, selected, key == KEY_RIGHT);
             Tui_setDirty(&state, true);
         }
         else if (SessionBridge_isAwaiting(&bridge) && approvalReply(key) != nullptr) {
@@ -571,15 +657,23 @@ int main(int argc, char **argv) {
             }
             Tui_setDirty(&state, true);
         }
-        else if (key == 16 || key == 19 || key == 15) {
+        else if (key == 16 || key == 19 || key == 7 || key == 14 || key == 15) {
             if (key == 16)
                 panel = PRIMEAGEN_PANEL_PEOPLE;
             else if (key == 19)
                 panel = PRIMEAGEN_PANEL_SERVERS;
+            else if (key == 7)
+                panel = PRIMEAGEN_PANEL_CHATS;
+            else if (key == 14)
+                panel = PRIMEAGEN_PANEL_PRIVATE;
             else {
                 panel = PRIMEAGEN_PANEL_PEOPLE;
                 selection = 0;
                 focused = true;
+            }
+            if (key != 15) {
+                selection = 0;
+                focused = panel == PRIMEAGEN_PANEL_PEOPLE;
             }
             Tui_setDirty(&state, true);
         }
@@ -590,46 +684,85 @@ int main(int argc, char **argv) {
                 continue;
             if (selectText)
                 continue; // terminal, not application, owns selection/copy
-            if (kind == TUI_MOUSE_CLICK && Primeagen_panelsClick(x, y, rows, columns, listWidth, panel, selection, &panel, &selection)) {
-                focused = selection == 0;
+            if (kind == TUI_MOUSE_CLICK && y == 0 && !treeVisible && x == 0) {
+                treeVisible = true;
                 Tui_setDirty(&state, true);
                 continue;
             }
-            if (!sessionMode && selection == 0 && kind == TUI_MOUSE_CLICK && y == rows - 3 && x >= chatLeft + 1 && x <= chatLeft + 10) {
+            if (x < chatLeft) {
+                if (y == 0 && kind == TUI_MOUSE_CLICK)
+                    treeVisible = false;
+                else if (kind == TUI_MOUSE_WHEEL_UP)
+                    (void) TerminalTreeView_scrollBy(tree, -3);
+                else if (kind == TUI_MOUSE_WHEEL_DOWN)
+                    (void) TerminalTreeView_scrollBy(tree, 3);
+                else if (kind == TUI_MOUSE_CLICK && y >= 1 && x < chatLeft - 1) {
+                    TerminalTreeNodeId id = TerminalTreeView_nodeAtOffset(tree, (size_t) (y - 1));
+                    if (id != TERMINAL_TREE_NO_NODE) {
+                        if (TerminalTreeView_isFolder(tree, id))
+                            (void) TerminalTreeView_toggle(tree, id);
+                        else {
+                            (void) TerminalTreeView_setSelected(tree, id);
+                            if (id == openCodeNode) {
+                                panel = PRIMEAGEN_PANEL_PEOPLE;
+                                selection = 0;
+                                focused = true;
+                            } else if (id == channelNode) {
+                                panel = PRIMEAGEN_PANEL_CHANNELS;
+                                selection = 3;
+                                focused = false;
+                            } else if (id == privateChatNode) {
+                                panel = PRIMEAGEN_PANEL_PRIVATE;
+                                selection = 0;
+                                focused = false;
+                            } else if (id == welcomeNode || id == projectNotesNode) {
+                                panel = PRIMEAGEN_PANEL_CHATS;
+                                selection = id == welcomeNode ? 0 : 1;
+                                focused = false;
+                            } else {
+                                panel = PRIMEAGEN_PANEL_PEOPLE;
+                                selection = 1;
+                                focused = false;
+                            }
+                        }
+                    }
+                }
+                Tui_setDirty(&state, true);
+                continue;
+            }
+            if (!sessionMode && liveSelected && kind == TUI_MOUSE_CLICK && y == rows - 3 && x >= chatLeft + 1 && x <= chatLeft + 10) {
                 connectRequested = true;
                 stopped = 1;
                 continue;
             }
-            if (x < chatLeft)
-                continue; // the list/rail never scroll the chat viewport
-            // Scrolling the chat is always available, whatever the list selection.
-            if (selection != 0 && kind != TUI_MOUSE_CLICK && kind != TUI_MOUSE_WHEEL_UP && kind != TUI_MOUSE_WHEEL_DOWN)
+            // Preview contexts never scroll the resident OpenCode transcript.
+            if (!liveSelected && kind != TUI_MOUSE_CLICK)
                 continue;
             TuiMouseAction action = TuiMouse_dispatch(&state, x - chatLeft, y, kind);
             if (action == TUI_MOUSE_QUIT)
                 stopped = 1;
-            else if (action == TUI_MOUSE_CLEAR && selection == 0) {
+            else if (action == TUI_MOUSE_CLEAR && liveSelected) {
                 Tui_clear(&state);
                 workingShown = false; // the placeholder was cleared with everything else
                 turnOpen = false;
             }
-            else if (action == TUI_MOUSE_INPUT && selection == 0)
+            else if (action == TUI_MOUSE_INPUT && liveSelected)
                 focused = true;
             else if (kind == TUI_MOUSE_CLICK)
                 focused = false;
             Tui_setDirty(&state, true);
-        } else if (key == KEY_UP)
+        } else if (key == KEY_UP && liveSelected)
             Tui_scrollBy(&state, 1);
-        else if (key == KEY_DOWN)
+        else if (key == KEY_DOWN && liveSelected)
             Tui_scrollBy(&state, -1);
-        else if (key == KEY_END)
+        else if (key == KEY_END && liveSelected)
             Tui_setScroll(&state, 0);
-        else if (key == TUI_CTRL_L && selection == 0) {
+        else if (key == TUI_CTRL_L && liveSelected) {
             Tui_clear(&state);
             workingShown = false; // the placeholder was cleared with everything else
             turnOpen = false;
         }
-        else if (key == '\t' && selection == 0) {
+        else if (key == '\t' && liveSelected) {
             focused = true;
             Tui_setDirty(&state, true);
         }
@@ -637,7 +770,7 @@ int main(int argc, char **argv) {
             Tui_setDirty(&state, true);
         else if (SessionBridge_isAwaiting(&bridge))
             continue; // scroll/navigation allowed, draft/submission stays frozen
-        else if (focused && selection == 0 && (key == '\n' || key == KEY_ENTER)) {
+        else if (focused && liveSelected && (key == '\n' || key == KEY_ENTER)) {
             int action = localCommand(&state, sessionMode);
             if (action != 0) {
                 // The command may have appended or cleared output, so the live
@@ -684,12 +817,13 @@ int main(int argc, char **argv) {
                 Tui_inputClear(&state);
             turnOpen = false; // the speaker label streams with the first output
             workingShown = false;
-        } else if (focused && selection == 0 && (key == KEY_BACKSPACE || key == 127 || key == '\b'))
+        } else if (focused && liveSelected && (key == KEY_BACKSPACE || key == 127 || key == '\b'))
             Tui_inputBackspace(&state);
-        else if (focused && selection == 0 && key >= ' ' && key <= '~')
+        else if (focused && liveSelected && key >= ' ' && key <= '~')
             ok = Tui_inputAddChar(&state, key);
     }
     SessionBridge_free(&bridge);
+    TerminalTreeView_free(tree);
     (void) mouseReporting(false);
     endwin();
     delscreen(screen);

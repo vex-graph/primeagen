@@ -132,10 +132,10 @@ static bool paperIsBright(const uint8_t *rgba, uint32_t width, uint32_t height) 
     size_t count = 0;
     for (size_t ly = 0; ly < 16; ++ly) {
         for (size_t lx = 0; lx < 16; ++lx) {
-            uint8_t r = 0, g = 0, b = 0, a = 0;
-            if (!TerminalImage_sampleCell(&probe, lx, ly, 16, 16, &r, &g, &b, &a) || a == 0)
+            TerminalImageSample sample = TerminalImage_sampleCell(&probe, lx, ly, 16, 16);
+            if (!sample.valid || sample.alpha == 0)
                 continue;
-            sum += TerminalImage_luminance(r, g, b);
+            sum += TerminalImage_luminance(sample.red, sample.green, sample.blue);
             ++count;
         }
     }
@@ -150,12 +150,11 @@ void PrimeagenScreen_setBanner(const uint8_t *rgba, uint32_t width, uint32_t hei
     }
     s_banner = TerminalImage((uint8_t*) (uintptr_t) rgba, (size_t) width, (size_t) height);
     TerminalImage_setInvert(&s_banner, paperIsBright(rgba, width, height));
-    size_t rampCount = 0;
-    const uint32_t *ramp = TerminalImage_rampPurple(&rampCount);
-    (void) TerminalImage_setColorRamp(&s_banner, ramp, rampCount);
+    TerminalImageColorRamp ramp = TerminalImage_rampPurple();
+    (void) TerminalImage_setColorRamp(&s_banner, ramp.data, ramp.count);
     // Which letter reads light and which reads dark is randomized per cell, not
     // luminance-ordered — the palette's whole range (≈30% up to near-white).
-    TerminalImage_setPaletteScatter(&s_banner, (uint8_t) rampCount);
+    TerminalImage_setPaletteScatter(&s_banner, (uint8_t) ramp.count);
     TerminalImage_setJitter(&s_banner, 20, 11);
     TerminalImage_setStyle(&s_banner, 0);
     (void) TerminalImage_setNoise(&s_banner, PRIMEAGEN_SCREEN_NOISE_ALPHABET, PRIMEAGEN_SCREEN_NOISE_COLOR);

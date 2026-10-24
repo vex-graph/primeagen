@@ -103,8 +103,7 @@ bool ToolList_execute(int root, const char *path, size_t cap, char **dest, size_
     if (ok) {
         if (count > 1)
             qsort(names, count, sizeof(*names), compare);
-        JsonWriter writer;
-        JsonWriter_init(&writer, output, cap + 1);
+    JsonWriter writer = JsonWriter(output, cap + 1);
         Json_beginArray(&writer);
         for (size_t i = 0; i < count; ++i)
             Json_stringVal(&writer, names[i]);

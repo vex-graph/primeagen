@@ -51,16 +51,27 @@ admission, candidate restore and commit or rejection, then submissions resume.
 The displayed generation identifies the running code. This is a trusted local
 developer release, not a network updater or full agent-runtime migration.
 
-The terminal now has **three columns**: a tightly stacked `⌘`/`▦` text-symbol
-rail with shared line borders, a clickable People/Servers list (then a selected
-server's channels), and the right-side chat with fixed input/status. The existing
-OpenCode entry returns to the real configured chat. Sola/WhateverName and
-Ecosystem/#channel1..3 are **offline previews**, not registered models or real
-server conversations; selecting them hides the live draft/history and cannot
-submit it. Returning to OpenCode preserves that chat's draft/history/scroll.
-Below 64 columns the rail/list collapse; text symbols fall back to ASCII in a
-non-UTF locale. `--list-width` changes the middle-column default. Automated
-headless cells prove geometry/selection, not appearance or actual mouse hardware.
+The terminal browser follows Semicolon’s compact **explorer + chat** layout. The
+tree sits in a filled, borderless panel with a small breathing gap before chat—no
+divider line. Rows use two-cell indentation steps, disclosure marks, Nerd Font
+icons, and a full-width selection rectangle. Its workspace tree contains exactly
+four top-level folders: `chats`
+(example chat entries), `users` (OpenCode and one example user), `servers`
+(`serverNumber1` with exactly one `#general` channel), and `private chat` (one
+unsaved conversation). Selecting a tree entry changes the right-hand chat context;
+that side remains the chat interface rather than becoming a category-specific
+preview screen. Only `users/OpenCode` connects to the existing live OpenCode
+session. Every other tree entry displays mock conversation/composer content and
+cannot send, scroll, or reveal the live session's draft/history. Folder rows use
+Nerd Font disclosure arrows and folder/file icons; a Nerd Font-capable terminal
+font is recommended. `Ctrl-B` or the tree header hides the explorer;
+`Ctrl-B` restores them without changing the selected chat. Tree-wheel scrolling,
+Up/Down row selection, and Left/Right folder folding are supported. The tree, saved
+chat history, server membership, channel rules, model controls, and private-chat
+saving are not implemented or persisted. The context labels are examples, not
+working settings. Below 64 columns the tree collapses; `--list-width` changes its
+width. Automated headless cells prove tree selection, panel treatment and chat isolation,
+not appearance or physical mouse behavior.
 
 Model replies now use a small **C terminal Markdown adapter**: bold, emphasis
 (portable underline fallback), headings, yellow inline/fenced code, and colored
@@ -306,13 +317,17 @@ Click the input
 line or press Tab to focus, or click Clear/Quit. Ctrl-L clears; Ctrl-Q quits. Enter
 sends only after connection; disconnected input makes no model/tool call.
 Mouse reporting depends on the terminal.
-Click `⌘` for People, `▦` for Servers, then click a list entry. Ctrl-P/Ctrl-S
-switch the middle panel; Ctrl-O returns to OpenCode. Only the right transcript
-scrolls. Preview entries cannot edit or send the resident chat draft.
+Click an entry in the workspace tree to select its chat context. Ctrl-P/Ctrl-S/
+Ctrl-G/Ctrl-N select Users/Servers/Chats/Private; Ctrl-O returns to the live
+OpenCode chat. The explorer and right-side chat interface are separated by spacing,
+not a drawn divider.
+Only the live OpenCode transcript scrolls. Other contexts cannot edit or send its
+draft. Server behavior, model controls, saved chats and private-chat saving
+are visual examples, not implemented actions.
 For highlighting/copying text, press **Ctrl-T**: mouse reporting turns off and
 the actual chat opens full-width, so terminal-native drag selection does not
 include the navigation columns. Drag to highlight, then use your terminal's Copy
-command (for example Cmd-C on macOS). Ctrl-T returns to the three-column browser.
+command (for example Cmd-C on macOS). Ctrl-T returns to the tree-and-chat layout.
 `primeagen tui --select-text` starts in that mode. Selection/clipboard behavior
 belongs to your terminal; this is not an application-owned selection buffer or
 automatic clipboard write. New output or scrolling may invalidate a selection.
@@ -419,9 +434,9 @@ uses these local C adapters behind the host-controlled execution gate instead.
   references/control flow, arbitrary external commands and registry extensibility
   remain future work. Building is never implicit permission to execute.
 - All work is cold-path; no zero-allocation/realtime or battle-tested claim.
-- The three-column browser is an initial presentation layer, not multi-model
-  session routing, server membership, persistent channel histories or role/tool
-  enforcement. Example entries are visibly labelled previews and make no calls.
+- The four-folder tree is an initial presentation layer, not multi-model session
+  routing, server membership, persistent user/channel/chat histories, private-chat
+  saving, model controls or role/tool enforcement. Example entries make no calls.
 - Updates reload only `cli/view.c` rendering/command exports. Host, Tui layouts,
    provider adapters, roles and tool integration require separate implementation/restart.
   SHA256 references come from the trusted local builder, not model output.

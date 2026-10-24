@@ -103,8 +103,7 @@ static uint64_t nowMs(void) {
 }
 ;;WHAT("SessionBridge")
 static bool queueText(SessionBridge *self, const char *key, const char *value) {
-    JsonWriter writer;
-    JsonWriter_init(&writer, (*self).request, sizeof((*self).request) - 1);
+    JsonWriter writer = JsonWriter((*self).request, sizeof((*self).request) - 1);
     Json_beginObject(&writer);
     Json_addKey(&writer, key);
     Json_stringVal(&writer, value);
@@ -123,8 +122,7 @@ static bool spawn(void *context, const EngineProviderSlot *engine, const char *p
     (void) length;
     (void) timeoutMs;
     SessionBridge *self = context;
-    JsonWriter writer;
-    JsonWriter_init(&writer, (*self).request, sizeof((*self).request) - 1);
+    JsonWriter writer = JsonWriter((*self).request, sizeof((*self).request) - 1);
     Json_beginObject(&writer);
     Json_addKey(&writer, "prompt");
     Json_stringVal(&writer, prompt);
@@ -162,11 +160,17 @@ static HarnessStatus handleFrame(SessionBridge *self, JsonDoc *doc) {
         uint32_t idLength, labelLength;
         const char *idValue = Json_string(doc, identity, &idLength);
         const char *labelValue = Json_string(doc, label, &labelLength);
+        JsonStringView id = Json_getString(doc, identity);
+        JsonStringView display = Json_getString(doc, label);
         if (!idValue || idLength == 0 || memchr(idValue, '\0', idLength) || !labelValue ||
-            memchr(labelValue, '\0', labelLength) ||
-            !Json_getString(doc, identity, (*self).approvalId, sizeof((*self).approvalId)) ||
-            !Json_getString(doc, label, (*self).approvalLabel, sizeof((*self).approvalLabel)))
+            memchr(labelValue, '\0', labelLength) || id.data == nullptr ||
+            id.length >= sizeof((*self).approvalId) || display.data == nullptr ||
+            display.length >= sizeof((*self).approvalLabel))
             return HARNESS_STATUS_TIMEOUT;
+        memcpy((*self).approvalId, id.data, id.length);
+        (*self).approvalId[id.length] = '\0';
+        memcpy((*self).approvalLabel, display.data, display.length);
+        (*self).approvalLabel[display.length] = '\0';
         (*self).awaiting = true;
         (*self).approvalSerial++;
         return HARNESS_STATUS_RUNNING;
@@ -175,9 +179,12 @@ static HarnessStatus handleFrame(SessionBridge *self, JsonDoc *doc) {
         /* A decoded NUL byte would truncate the display line; reject it instead. */
         uint32_t noteLength;
         const char *noteValue = Json_string(doc, note, &noteLength);
+        JsonStringView noteText = Json_getString(doc, note);
         if (!noteValue || noteLength == 0 || memchr(noteValue, '\0', noteLength) ||
-            !Json_getString(doc, note, (*self).note, sizeof((*self).note)))
+            noteText.data == nullptr || noteText.length >= sizeof((*self).note))
             return HARNESS_STATUS_TIMEOUT;
+        memcpy((*self).note, noteText.data, noteText.length);
+        (*self).note[noteText.length] = '\0';
         (*self).notePending = true;
         return HARNESS_STATUS_RUNNING;
     }
@@ -189,9 +196,12 @@ static HarnessStatus handleFrame(SessionBridge *self, JsonDoc *doc) {
         return HARNESS_STATUS_TIMEOUT;
     uint32_t textLength;
     const char *value = Json_string(doc, text, &textLength);
+    JsonStringView textValue = Json_getString(doc, text);
     if (!value || memchr(value, '\0', textLength) || !Json_bool(doc, success) ||
-        !Json_getString(doc, text, (*self).text, sizeof((*self).text)))
+        textValue.data == nullptr || textValue.length >= sizeof((*self).text))
         return HARNESS_STATUS_TIMEOUT;
+    memcpy((*self).text, textValue.data, textValue.length);
+    (*self).text[textValue.length] = '\0';
     return HARNESS_STATUS_DONE;
 }
 ;;WHAT("SessionBridge")

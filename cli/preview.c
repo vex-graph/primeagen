@@ -1,7 +1,7 @@
 #define _XOPEN_SOURCE_EXTENDED 1
 // cli/preview.c — run the NEW Primeagen frame (cli/screen.c) in a real terminal,
 // without touching the live view or the reload path. A development preview: it
-// owns the terminal, decodes resources/>w<.png with a libc-backed buffer (this
+// owns the terminal, decodes resources/w.png with a libc-backed buffer (this
 // host has no engine arena), and re-renders on every resize so the "always
 // revalidate" behaviour is visible. Keys: 1 = HOME, 2 = CHAT, r = resize, q = quit.
 #include <locale.h>
@@ -12,6 +12,36 @@
 
 #include "cli/screen.h"
 #include "image/png.h"
+#include "annotation/definition.h"
+#include "annotation/overview.h"
+
+;;DEFINITION
+/** A development preview, not the product: it exists so the frame can be looked
+ * at in a real terminal while the live view stays untouched. It owns the
+ * terminal (initscr/endwin) and the two things it must free — the screen and the
+ * Tui model — in that order at the end. The loop polls instead of blocking on a
+ * key because a zoom, a fullscreen toggle or a window drag changes the size
+ * without ncurses ever handing the app a KEY_RESIZE; revalidating before painting
+ * is what keeps the "always revalidate" path honest, and nothing is painted while
+ * the terminal is idle. */
+
+;;OVERVIEW
+/**
+ * ============================================================================
+ * MODULE: preview (cli/preview.c — development host, owns no class)
+ * ============================================================================
+ * Runs the new Primeagen frame (cli/screen.c) in a real terminal without touching
+ * the live view or the reload path. It owns the terminal, decodes
+ * resources/w.png with a libc-backed buffer because this host has no engine
+ * arena, and re-renders on every size change so the "always revalidate" behaviour
+ * is visible.
+ *
+ * Keys: 1 = HOME, 2 = CHAT, r = resize, q = quit.
+ *
+ * FUNCTION REGISTRY:
+ *   int main(void) — banner decode, terminal setup, poll/revalidate/present loop.
+ * ============================================================================
+ */
 
 int main(void) {
     setlocale(LC_CTYPE, "");
@@ -20,9 +50,9 @@ int main(void) {
     char bannerPath[1200];
     const char *root = getenv("PRIMEAGEN_ROOT");
     if (root != nullptr)
-        (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/>w<.png", root);
+        (void) snprintf(bannerPath, sizeof bannerPath, "%s/resources/w.png", root);
     else
-        (void) snprintf(bannerPath, sizeof bannerPath, "resources/>w<.png");
+        (void) snprintf(bannerPath, sizeof bannerPath, "resources/w.png");
     FILE *bannerFile = fopen(bannerPath, "rb");
     if (bannerFile != nullptr) {
         static uint8_t pngBytes[1u << 20];
