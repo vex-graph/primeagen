@@ -3,9 +3,12 @@
 ## Constitution Link
 
 The complete [workspace constitution](https://gist.github.com/vex-graph/4132a6c45cb6d3797c3e8eff2e94035a)
-governs this project. Workspace path: `../../gist/PREFERENCES.md`. Read it first,
-then this document, `../../tests/test-preferences.md`, current
-`../../gist/test-checklist.md`, and actual implementation.
+governs this project. The binding law list is `gist.md`
+(`../../../metadata/gists/preferences/gist.md`); `../../../PREFERENCES.md` is its full
+rationale and is never ingested whole. Read the law first, then this document, the proof
+lawbook `../../../tests/test-preferences.md` (slice one law with
+`./tools/prefs test "<title>"`), the evidence ledger
+`../../../metadata/gists/test-checklist.md`, and actual implementation.
 
 ## Law Index (Binding Matrix)
 
@@ -20,7 +23,7 @@ Primeagen lives outside the ecosystem tree, checkout anywhere — personal R5 co
 
 Native direction: a C23 ncurses frontend in `cli/` over the independently owned `tui/` model and `tui/event/` normalized terminal-cell events — an offline preview (launcher default). `/connect` restores the terminal, then invokes the existing Python session host on the expressly selected Go Flash model, reusing OpenCode login; no key entry/auth copying or extra tool approvals; unsupported slash commands stay local. A transitional connected frontend, not a completed C runtime or server/channel runtime. Personality `personality/owo.c` owns canonical AI speech-style instructions, never consent or tool policy; explicit chat --owo selects native prompt injection, offline TUI greeting/status only reflect that mode. Vexspoke's JSON string writer consumed, not duplicated; display buffers cold growable C storage, no realtime/backend-trust claim.
 
-Terminal navigation: three-column rail/list/chat — connected line-bordered text-symbol buttons select People or Servers; the middle panel lists entries or the selected server's channels. The configured OpenCode chat stays separate from explicit offline example people/channel previews, which never send or display that chat's draft/history. New navigation passes by value to a new view export; legacy draw ABI and resident Tui layout unchanged. Ctrl-T/--select-text returns drag selection to the terminal, disabling mouse reporting and temporarily painting the chat full-width without navigation text in multiline selections; terminal owns highlighting/copy — no clipboard mutation, application selection buffer or physical-terminal proof.
+Terminal navigation: the live ncurses view uses a Semicolon-style collapsible workspace tree in a filled, borderless explorer panel beside the right-side chat interface; a small breathing gap replaces a drawn divider. Rows use two-cell depth steps, folder/file and semantic Nerd Font icons, and a full-width selection rectangle. The tree contains exactly four top-level folders—chats, users, servers, private chat—with one `#general` channel under one example server. Intended Nerd Font glyphs require a Nerd Font-capable terminal font. Tree rows fold and expand, scrolling honors the tree viewport, and Ctrl-B hides/restores the explorer without changing selected chat; selection changes chat context, not pane type. Only Users/OpenCode is connected; all other entries are mock data, never send, persist, or show/scroll the live draft/history. Server behavior, model controls, tree/chat persistence and private-chat saving remain unimplemented. Navigation passes by value to the reloadable view; the resident Tui and tree remain host-owned. The toolkit-backed `cli/screen.c` is still not wired to the live app. Ctrl-T/--select-text returns drag selection to the terminal, disabling mouse reporting and temporarily painting the chat full-width without navigation text in multiline selections; terminal owns highlighting/copy — no clipboard mutation, application selection buffer or physical-terminal proof.
 
 Host replies: strict UTF-8 JSON, not ASCII-escaped surrogate halves; Python decodes provider JSON UTF-16 pairs before encoding native wire bytes; isolated surrogates fail. Transcript admission preserves safe UTF-8, escaping malformed bytes/terminal controls/bidi overrides; row projection never splits a scalar; wide ncurses output measures wcwidth under stable host LC_CTYPE, not byte counts. Input stays ASCII; grapheme/ZWJ shaping, font-width agreement and BMP-only escapes are gaps. install-command.sh links the real shell launcher into a per-user bin directory, keeping unrelated commands, shell config and caller cwd. Terminal Markdown: a Primeagen presentation adapter, not a guessed Vexspoke API — Tui sanitizes controls before parsing and owns parallel visible-byte style flags; ncurses maps only host-defined flags, never model ANSI. Flat subset and emphasis fallback imply no CommonMark/full Unicode shaping or appearance acceptance.
 
@@ -48,4 +51,4 @@ Build is not run permission. Func run still requires a session-created artifact;
 
 ## Proof
 
-Mirrored offline owners live in `../../tests/primeagen`. Test output/readiness must distinguish real native envelope and Func artifact execution from fake model responses; live providers, OS/platform gaps and GUI approval remain separate. Live answer smoke is opt-in only, using the user's selected `opencode-go/deepseek-v4.1-flash`, never a fallback paid model. A passed arithmetic answer proves that narrow route, not general competence or remote sandbox policy.
+Mirrored offline owners live in `../../../tests/primeagen`. Test output/readiness must distinguish real native envelope and Func artifact execution from fake model responses; live providers, OS/platform gaps and GUI approval remain separate. Live answer smoke is opt-in only, using the user's selected `opencode-go/deepseek-v4.1-flash`, never a fallback paid model. A passed arithmetic answer proves that narrow route, not general competence or remote sandbox policy.
