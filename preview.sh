@@ -19,7 +19,7 @@ mkdir -p "$root/.build"
     "$root/cli/preview.c" "$root/cli/screen.c" "$root/cli/appearance.c" \
     "$root/tui/tui.c" "$root/tui/markdown.c" "$vex/net/json.c" \
     "$vex/image/png.c" "$rel/nio/mem.c" "$rel/type/type.c" "$vex/atomic/spin.c" \
-    "$det/terminal/terminal_canvas.c" "$det/terminal/terminal_frame.c" \
-    "$det/terminal/terminal_image.c" "$det/terminal/terminal_appearance.c" \
+    "$det/ui/surface/terminal_canvas.c" "$det/ui/panel/terminal_frame.c" \
+    "$det/ui/image/terminal_image.c" "$det/ui/theme/terminal_appearance.c" \
     -lncurses -lz -o "$root/.build/preview"
 exec "$root/.build/preview" "$@"

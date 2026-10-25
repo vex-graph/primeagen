@@ -1,7 +1,7 @@
 #ifndef PRIMEAGEN_CLI_VIEW_H
 #define PRIMEAGEN_CLI_VIEW_H
 #include "tui/tui.h"
-#include "terminal/terminal_tree_view.h"
+#include "ui/tree/terminal_tree_view.h"
 // Cold reload contract: resident host owns Tui, ncurses and borrowed session
 // pipes. Views own no state or callbacks. Incompatible layout requires a host
 // rebuild and a Hot_cold_abi version bump, not migration by address casting.

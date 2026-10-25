@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <curses.h>
 
-#include "terminal/terminal_appearance.h"
+#include "ui/theme/terminal_appearance.h"
 
 // cli/appearance.h — Primeagen's look, chosen in settings, drawn by Determinant.
 //

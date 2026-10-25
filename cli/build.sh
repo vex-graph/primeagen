@@ -13,7 +13,7 @@ PRIMEAGEN_ROOT="$root"
 export PRIMEAGEN_ROOT
 # The R3 terminal toolkit (canvas/view/appearance). Determinant stays bare; the
 # app supplies every string, colour and glyph choice.
-det_src="$det/terminal/terminal_canvas.c $det/terminal/terminal_frame.c $det/terminal/terminal_image.c $det/terminal/terminal_appearance.c $det/terminal/terminal_tree_view.c"
+det_src="$det/ui/surface/terminal_canvas.c $det/ui/panel/terminal_frame.c $det/ui/image/terminal_image.c $det/ui/theme/terminal_appearance.c $det/ui/tree/terminal_tree_view.c"
 sh "$root/tools/build.sh"
 mkdir -p "$root/.build"
 stage=$(mktemp "$root/.build/tui.XXXXXX")

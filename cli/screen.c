@@ -5,13 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "terminal/terminal_style.h"
-#include "terminal/terminal_color.h"
-#include "terminal/terminal_frame.h"
-#include "terminal/terminal_list_view.h"
-#include "terminal/terminal_text_view.h"
-#include "terminal/terminal_input_line.h"
-#include "terminal/terminal_status_bar.h"
+#include "format/terminal_style.h"
+#include "format/terminal_color.h"
+#include "ui/panel/terminal_frame.h"
+#include "ui/list/terminal_list_view.h"
+#include "ui/text/terminal_text_view.h"
+#include "ui/field/terminal_input_line.h"
+#include "ui/text/terminal_status_bar.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 

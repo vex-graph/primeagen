@@ -7,9 +7,9 @@
 #include <curses.h>
 
 #include "tui/tui.h"
-#include "terminal/terminal_canvas.h"
-#include "terminal/terminal_image.h"
-#include "terminal/terminal_appearance.h"
+#include "ui/surface/terminal_canvas.h"
+#include "ui/image/terminal_image.h"
+#include "ui/theme/terminal_appearance.h"
 
 // cli/screen.h — Primeagen's frame, composed by the Determinant toolkit.
 //

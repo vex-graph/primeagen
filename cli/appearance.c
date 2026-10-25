@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "terminal/terminal_canvas.h"
-#include "terminal/terminal_style.h"
+#include "ui/surface/terminal_canvas.h"
+#include "format/terminal_style.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
 
