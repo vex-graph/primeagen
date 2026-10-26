@@ -45,7 +45,7 @@
 
 typedef struct PrimeagenScreen {
     uint32_t *cells;    // codepoint plane
-    uint8_t *styles;    // attribute plane
+    uint16_t *styles;   // attribute plane (16-bit style flags)
     uint32_t *fg;       // 0xRRGGBBAA foreground plane
     uint32_t *bg;       // 0xRRGGBBAA background plane
     size_t rows;

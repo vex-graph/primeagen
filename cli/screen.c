@@ -32,7 +32,7 @@
  * ============================================================================
  * STRUCT FIELDS (Mirroring cli/screen.h):
  *   uint32_t *cells       codepoint plane
- *   uint8_t *styles       attribute plane
+ *   uint16_t *styles      attribute plane
  *   uint32_t *fg, *bg     0xRRGGBBAA planes
  *   size_t rows, columns, capacity
  * PRIVATE HELPERS:
@@ -72,7 +72,7 @@ bool PrimeagenScreen_bind(PrimeagenScreen *self, size_t rows, size_t columns) {
         uint32_t *cells = (uint32_t*) realloc((*self).cells, want * sizeof(uint32_t));
         if (cells == nullptr) return false;
         (*self).cells = cells;
-        uint8_t *styles = (uint8_t*) realloc((*self).styles, want);
+        uint16_t *styles = (uint16_t*) realloc((*self).styles, want);
         if (styles == nullptr) return false;
         (*self).styles = styles;
         uint32_t *fg = (uint32_t*) realloc((*self).fg, want * sizeof(uint32_t));
@@ -475,7 +475,7 @@ bool PrimeagenScreen_present(const PrimeagenScreen *self, WINDOW *win) {
             uint32_t cp = (*self).cells[index];
             if (cp == 0)
                 continue;
-            uint8_t style = (*self).styles[index];
+            uint16_t style = (*self).styles[index];
             attr_t attr = A_NORMAL;
             if (style & TERMINAL_STYLE_DIM) attr |= A_DIM;
             if (style & TERMINAL_STYLE_BOLD) attr |= A_BOLD;

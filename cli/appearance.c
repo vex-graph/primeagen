@@ -42,7 +42,7 @@ static bool s_loaded = false;
 static char s_name[PRIMEAGEN_APPEARANCE_NAME_MAX] = "ascii-striped";
 static uint32_t *s_cells = nullptr;
 static size_t s_cap = 0;
-static uint8_t *s_styles = nullptr;
+static uint16_t *s_styles = nullptr;
 
 const TerminalAppearance *PrimeagenAppearance_current(void) {
     if (!s_loaded) {
@@ -73,7 +73,7 @@ bool PrimeagenAppearance_drawRule(WINDOW *win, int row, int left, int width) {
         if (cells == nullptr)
             return false;
         s_cells = cells;
-        uint8_t *styles = (uint8_t*) realloc(s_styles, (size_t) width);
+        uint16_t *styles = (uint16_t*) realloc(s_styles, (size_t) width * sizeof(uint16_t));
         if (styles == nullptr)
             return false;
         s_styles = styles;
